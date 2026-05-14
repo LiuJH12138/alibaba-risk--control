@@ -1,5 +1,5 @@
 torch-geometric==2.6.1
-kaggle==1.6.17
+kaggle==2.1.2
 lightgbm==4.5.0
 sklearn2pmml==0.110.0
 onnx==1.17.0
