@@ -1,6 +1,13 @@
+import numpy as np
 import pandas as pd
 import pytest
 from src.config import load_config
+from src.data.load import join_transaction_identity
+from src.data.uid import synthesize_uid
+from src.data.features import FeatureProcessor
+from src.data.sequence import build_sequences
+from src.data.graph import build_edges
+
 
 def test_load_config_returns_dict():
     cfg = load_config("data")
@@ -12,7 +19,6 @@ def test_load_config_unknown_raises():
     with pytest.raises(FileNotFoundError):
         load_config("nonexistent")
 
-from src.data.load import join_transaction_identity
 
 def test_join_left_keeps_all_transactions():
     txn = pd.DataFrame({"TransactionID": [1, 2, 3], "isFraud": [0, 1, 0],
@@ -23,7 +29,6 @@ def test_join_left_keeps_all_transactions():
     assert merged.loc[merged.TransactionID == 1, "DeviceType"].isna().all()
     assert merged.loc[merged.TransactionID == 2, "DeviceType"].iloc[0] == "mobile"
 
-from src.data.uid import synthesize_uid
 
 def test_uid_groups_same_card_addr():
     txn = pd.DataFrame({
@@ -42,7 +47,6 @@ def test_uid_handles_nan():
     uid = synthesize_uid(txn)
     assert uid.notna().all()
 
-from src.data.features import FeatureProcessor
 
 def test_processor_fits_on_train_only():
     train = pd.DataFrame({"ProductCD": ["A", "B"], "TransactionAmt": [10.0, 20.0]})
@@ -64,8 +68,6 @@ def test_processor_meta_has_cardinalities():
     assert fp.meta["cat_cardinalities"]["ProductCD"] == 3
     assert fp.meta["num_cols"] == ["TransactionAmt"]
 
-import numpy as np
-from src.data.sequence import build_sequences
 
 def test_sequence_window_and_mask():
     # 2 个 uid,uid "x" 有 3 笔,uid "y" 有 1 笔
@@ -83,3 +85,27 @@ def test_sequence_window_and_mask():
     assert seq[yi, 1, 0] == 9.0
     # uid x 第 1 笔(dt=10)→ 位置 0 padding,位置 1 自身
     assert mask[0].tolist() == [False, True]
+
+
+def test_edges_are_time_respecting_and_share_entity():
+    # 4 笔交易,card1 列:0,1,3 共享 card1=100
+    df = pd.DataFrame({
+        "card1": [100, 100, 999, 100],
+        "addr1": [-1, -1, -1, -1],
+        "TransactionDT": [10, 20, 15, 30],
+    })
+    src, dst = build_edges(df, entity_cols=["card1"], max_degree=10, max_per_entity=10)
+    edges = set(zip(src.tolist(), dst.tolist()))
+    # 边方向:src 更早 → dst 更晚(time-respecting)
+    for s, d in edges:
+        assert df["TransactionDT"].iloc[s] < df["TransactionDT"].iloc[d]
+    # 交易 0(dt10)→ 交易 1(dt20)应连(同 card1,0 更早)
+    assert (0, 1) in edges
+    # 交易 2(card1=999)不与任何人连
+    assert all(2 not in e for e in edges)
+
+def test_edges_skip_sentinel_entity():
+    # addr1 = -1 是哨兵(缺失填充值),不应据此连边
+    df = pd.DataFrame({"card1": [-1, -1], "addr1": [-1, -1], "TransactionDT": [10, 20]})
+    src, dst = build_edges(df, entity_cols=["card1", "addr1"], max_degree=10, max_per_entity=10)
+    assert len(src) == 0
