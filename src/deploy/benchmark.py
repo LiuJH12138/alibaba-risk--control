@@ -57,7 +57,8 @@ def benchmark_onnx(onnx_path, feat_dim, seq_len, d_graph, providers,
 
 def run_benchmark():
     """4 档对比:PyTorch-CPU / PyTorch-GPU / ONNX-GPU / TensorRT-FP16。
-    结果落 experiments/benchmark.json。"""
+    结果落 experiments/benchmark.json。
+    每个 config 独立 try/except:单个 config 失败不中断其余 config。"""
     from src.config import load_config
     from src.models.fraud_model import FraudModel
     from src.deploy.export_onnx import export_online_path, verify_onnx_parity
@@ -79,26 +80,105 @@ def run_benchmark():
     Path("artifacts").mkdir(exist_ok=True)
     onnx_path = "artifacts/online.onnx"
     export_online_path(model, feat_dim, seq_len, d_graph, onnx_path)
+    # Parity check is a hard gate — a failure means the export is broken.
     assert verify_onnx_parity(model, onnx_path, feat_dim, seq_len, d_graph), \
         "ONNX parity failed — 不信任后续延迟数字"
 
     results = {}
-    results["pytorch_cpu"] = benchmark_torch(model, feat_dim, seq_len, d_graph, "cpu")
+
+    # --- pytorch_cpu ---
+    try:
+        print("Benchmarking pytorch_cpu ...")
+        results["pytorch_cpu"] = benchmark_torch(
+            model, feat_dim, seq_len, d_graph, "cpu")
+        print("pytorch_cpu:", results["pytorch_cpu"])
+    except Exception as exc:
+        print(f"[pytorch_cpu] FAILED: {exc}")
+        results["pytorch_cpu"] = {"skipped": str(exc)}
+
+    # --- pytorch_gpu ---
     if torch.cuda.is_available():
-        results["pytorch_gpu"] = benchmark_torch(model, feat_dim, seq_len, d_graph, "cuda")
-        results["onnx_gpu"] = benchmark_onnx(
-            onnx_path, feat_dim, seq_len, d_graph, ["CUDAExecutionProvider"])
+        try:
+            print("Benchmarking pytorch_gpu ...")
+            results["pytorch_gpu"] = benchmark_torch(
+                model, feat_dim, seq_len, d_graph, "cuda")
+            print("pytorch_gpu:", results["pytorch_gpu"])
+        except Exception as exc:
+            print(f"[pytorch_gpu] FAILED: {exc}")
+            results["pytorch_gpu"] = {"skipped": str(exc)}
+    else:
+        results["pytorch_gpu"] = {"skipped": "CUDA not available"}
+
+    # --- onnx_gpu ---
+    if torch.cuda.is_available():
+        try:
+            print("Benchmarking onnx_gpu ...")
+            import onnxruntime as ort
+            providers = ["CUDAExecutionProvider"]
+            sess = ort.InferenceSession(onnx_path, providers=providers)
+            active = sess.get_providers()
+            if "CUDAExecutionProvider" not in active:
+                raise RuntimeError(
+                    f"CUDAExecutionProvider not active (got {active}); "
+                    "likely cuDNN/onnxruntime-gpu incompatibility")
+            seq_np = np.random.randn(1, seq_len, feat_dim).astype("float32")
+            mask_np = np.ones((1, seq_len), dtype=bool)
+            graph_np = np.random.randn(1, d_graph).astype("float32")
+            feed = {"seq": seq_np, "mask": mask_np, "graph_emb": graph_np}
+            for _ in range(50):
+                sess.run(None, feed)
+            times = []
+            for _ in range(1000):
+                t0 = time.perf_counter()
+                sess.run(None, feed)
+                times.append((time.perf_counter() - t0) * 1000)
+            results["onnx_gpu"] = _percentiles(times)
+            print("onnx_gpu:", results["onnx_gpu"])
+        except Exception as exc:
+            print(f"[onnx_gpu] SKIPPED: {exc}")
+            results["onnx_gpu"] = {"skipped": str(exc)}
+    else:
+        results["onnx_gpu"] = {"skipped": "CUDA not available"}
+
+    # --- tensorrt_fp16 ---
     if trt_available():
-        if build_engine(onnx_path, "artifacts/online.engine", fp16=True):
-            results["tensorrt_fp16"] = benchmark_onnx(
-                onnx_path, feat_dim, seq_len, d_graph,
-                [("TensorrtExecutionProvider", {"trt_fp16_enable": True})])
+        try:
+            print("Building TensorRT engine ...")
+            engine_ok = build_engine(onnx_path, "artifacts/online.engine", fp16=True)
+            if not engine_ok:
+                raise RuntimeError("build_engine returned False")
+            print("Benchmarking tensorrt_fp16 via ORT TensorRT EP ...")
+            import onnxruntime as ort
+            trt_providers = [("TensorrtExecutionProvider", {"trt_fp16_enable": True})]
+            trt_sess = ort.InferenceSession(onnx_path, providers=trt_providers)
+            trt_active = trt_sess.get_providers()
+            if "TensorrtExecutionProvider" not in trt_active:
+                raise RuntimeError(
+                    f"TensorrtExecutionProvider not active (got {trt_active}); "
+                    "likely cuDNN/onnxruntime-gpu incompatibility — engine built but EP unavailable")
+            seq_np = np.random.randn(1, seq_len, feat_dim).astype("float32")
+            mask_np = np.ones((1, seq_len), dtype=bool)
+            graph_np = np.random.randn(1, d_graph).astype("float32")
+            feed = {"seq": seq_np, "mask": mask_np, "graph_emb": graph_np}
+            for _ in range(50):
+                trt_sess.run(None, feed)
+            times = []
+            for _ in range(1000):
+                t0 = time.perf_counter()
+                trt_sess.run(None, feed)
+                times.append((time.perf_counter() - t0) * 1000)
+            results["tensorrt_fp16"] = _percentiles(times)
+            print("tensorrt_fp16:", results["tensorrt_fp16"])
+        except Exception as exc:
+            print(f"[tensorrt_fp16] SKIPPED: {exc}")
+            results["tensorrt_fp16"] = {"skipped": str(exc)}
     else:
         results["tensorrt_fp16"] = {"skipped": "TensorRT not available"}
 
     Path("experiments").mkdir(exist_ok=True)
     with open("experiments/benchmark.json", "w") as f:
         json.dump(results, f, indent=2)
+    print("\n=== benchmark.json ===")
     for k, v in results.items():
         print(k, v)
     return results
