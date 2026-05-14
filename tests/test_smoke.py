@@ -44,3 +44,16 @@ def test_onnx_export_and_parity(tmp_path):
     onnx_path = str(tmp_path / "model.onnx")
     export_online_path(model, feat_dim=12, seq_len=8, d_graph=12, path=onnx_path)
     assert verify_onnx_parity(model, onnx_path, feat_dim=12, seq_len=8, d_graph=12)
+
+from src.deploy.benchmark import benchmark_torch
+
+def test_benchmark_torch_returns_latency_stats():
+    from src.models.fraud_model import FraudModel
+    model = FraudModel(feat_dim=8, model_cfg={
+        "d_model": 16, "n_heads": 2, "n_transformer_layers": 1, "d_seq": 8,
+        "d_graph": 8, "graphsage_layers": 2, "d_fuse": 8, "mlp_hidden": 4,
+        "dropout": 0.0}, fusion_mode="gated").eval()
+    stats = benchmark_torch(model, feat_dim=8, seq_len=6, d_graph=8,
+                            device="cpu", n_runs=20, warmup=5)
+    assert "p50_ms" in stats and "p95_ms" in stats and "p99_ms" in stats
+    assert stats["p50_ms"] > 0
