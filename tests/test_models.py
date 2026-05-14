@@ -3,6 +3,8 @@ from src.models.sequence_tower import SequenceTower
 from src.models.graph_tower import GraphTower
 from src.models.fusion import FusionHead
 from src.models.fraud_model import FraudModel
+from src.dataset import make_loader
+from torch_geometric.data import Data
 
 def test_sequence_tower_output_shape():
     tower = SequenceTower(feat_dim=16, d_model=32, n_heads=4,
@@ -86,3 +88,21 @@ def test_fraud_model_online_forward_uses_precomputed_graph_emb():
     out.sum().backward()
     assert model.seq_tower.input_proj.weight.grad is not None
     assert model.graph_tower.convs[0].lin_l.weight.grad is not None
+
+def test_loader_yields_aligned_seq_and_seeds():
+    n = 40
+    graph = Data(x=torch.randn(n, 8),
+                 edge_index=torch.randint(0, n, (2, 120)),
+                 y=(torch.rand(n) > 0.9).float(),
+                 t=torch.arange(n))
+    seq_all = {"seq": torch.randn(n, 6, 8), "mask": torch.ones(n, 6, dtype=torch.bool)}
+    idx = torch.arange(0, 20)
+    loader = make_loader(graph, seq_all, idx, batch_size=8,
+                         neighbor_sample=[10, 5], shuffle=False)
+    batch = next(iter(loader))
+    # batch 应含:子图(x, edge_index)、seed 局部索引、对齐的 seq/mask/label
+    assert batch["seq"].shape[0] == batch["label"].shape[0]
+    assert batch["seq"].shape[0] <= 8
+    assert batch["seed_local"].shape[0] == batch["seq"].shape[0]
+    # seed 局部索引指向子图内节点
+    assert batch["seed_local"].max() < batch["x"].shape[0]
