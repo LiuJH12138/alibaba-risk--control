@@ -1,6 +1,8 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from src.models.losses import HybridFocalLoss, hard_negative_mining
+from src.evaluate import compute_metrics, recall_at_fixed_fpr
 
 def test_focal_reduces_to_bce_when_gamma_zero():
     logits = torch.tensor([0.5, -1.2, 2.0])
@@ -30,3 +32,18 @@ def test_hnm_keeps_hardest_negatives():
     keep = hard_negative_mining(per_sample, targets, neg_pos_ratio=2.0)
     # 1 个正样本 → 保留 2 个最难负样本(idx 1,3)+ 全部正样本(idx 4)
     assert keep.tolist() == [False, True, False, True, True]
+
+def test_compute_metrics_perfect_separation():
+    y_true = np.array([0, 0, 1, 1])
+    y_score = np.array([0.1, 0.2, 0.8, 0.9])
+    m = compute_metrics(y_true, y_score)
+    assert abs(m["roc_auc"] - 1.0) < 1e-6
+    assert abs(m["pr_auc"] - 1.0) < 1e-6
+    assert 0.0 <= m["ks"] <= 1.0
+
+def test_recall_at_fixed_fpr():
+    y_true = np.array([0, 0, 0, 1, 1])
+    y_score = np.array([0.1, 0.2, 0.3, 0.7, 0.9])
+    # FPR <= 0.34 时阈值可把 3 个负样本都判负,2 个正样本都判正 → recall 1.0
+    r = recall_at_fixed_fpr(y_true, y_score, fpr=0.34)
+    assert abs(r - 1.0) < 1e-6
