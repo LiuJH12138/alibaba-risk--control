@@ -1,0 +1,20 @@
+{
+  "pytorch_cpu": {
+    "p50_ms": 9.374888613820076,
+    "p95_ms": 78.32057732157409,
+    "p99_ms": 84.1102153342217,
+    "mean_ms": 25.617541768588126
+  },
+  "pytorch_gpu": {
+    "p50_ms": 1.3306830078363419,
+    "p95_ms": 1.3590989634394646,
+    "p99_ms": 1.3846478331834078,
+    "mean_ms": 1.335808071307838
+  },
+  "onnx_gpu": {
+    "skipped": "CUDAExecutionProvider not active (got ['CPUExecutionProvider']); likely cuDNN/onnxruntime-gpu incompatibility"
+  },
+  "tensorrt_fp16": {
+    "skipped": "TensorrtExecutionProvider not active (got ['CPUExecutionProvider']); likely cuDNN/onnxruntime-gpu incompatibility \u2014 engine built but EP unavailable"
+  }
+}
