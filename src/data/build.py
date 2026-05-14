@@ -91,3 +91,7 @@ def build_all():
         json.dump(manifest, f, indent=2)
     print("build done:", manifest)
     return manifest
+
+
+if __name__ == "__main__":
+    build_all()

@@ -36,22 +36,20 @@ pip install torch-sparse torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+c
 ## 运行
 
 ```bash
-# 1. 构建数据(下载 IEEE-CIS、特征工程、序列、图)
-python src/build_data.py
+# 1. 构建数据(需先配置 Kaggle 凭证到 ~/.kaggle/,IEEE-CIS 数据集)
+python -m src.data.build
 
-# 2. 运行完整实验矩阵(5 个深度配置 + LightGBM 基线)
-python src/train.py                          # 深度模型消融
-python src/lgbm_baseline.py                  # LightGBM 基线 + (尝试)PMML 导出
+# 2. 实验矩阵(5 配置架构与损失消融)
+python -m src.train
 
-# 3. ONNX 导出 + TensorRT 引擎编译
-python src/export_onnx.py
-python src/build_trt.py
+# 3. LightGBM 基线 + PMML 导出
+python -m src.baseline_lgbm
 
-# 4. 延迟 benchmark
-python src/run_benchmark.py
+# 4. 延迟 benchmark(内部含 ONNX 导出 + TensorRT 引擎构建)
+python -m src.deploy.benchmark
 
-# 5. 单元测试 / 端到端冒烟测试
-pytest
+# 测试
+pytest -v
 ```
 
 结果写入 `experiments/results.json` 和 `experiments/benchmark.json`。
