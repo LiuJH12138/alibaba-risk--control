@@ -128,3 +128,16 @@ def test_validate_split_rejects_leak():
     # 故意构造泄漏:train 含 dt=4,val 含 dt=1
     with pytest.raises(AssertionError):
         validate_split(dt, train_idx=np.array([0, 3]), val_idx=np.array([1, 2]))
+
+def test_processor_output_is_bounded():
+    # 高基数类别列(如 IEEE-CIS card1)的原始整数编码不能泄漏进特征矩阵
+    rng = np.random.default_rng(0)
+    train = pd.DataFrame({
+        "card1": np.arange(500),                      # 500 个不同值 → 基数 501
+        "TransactionAmt": rng.normal(0, 1, size=500),
+    })
+    fp = FeatureProcessor(cat_cols=["card1"], num_cols=["TransactionAmt"])
+    fp.fit(train)
+    out = fp.transform(train)
+    # 所有输出列必须有界 —— 不能有原始大整数编码漏出
+    assert out.abs().to_numpy().max() <= 11.0, f"unbounded feature: max abs = {out.abs().to_numpy().max()}"

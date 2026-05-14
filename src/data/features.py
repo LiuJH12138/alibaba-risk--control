@@ -17,7 +17,7 @@ NUM_COLS = (
 )
 
 class FeatureProcessor:
-    """类别字段 → 整数编码(0 = unknown 桶);数值字段 → 标准化 + 缺失指示位。
+    """类别字段 → 整数编码归一化到 [0,1)(除以基数);数值字段 → 标准化 + clip[-10,10] + 缺失指示位。
     所有统计量只在 train 上 fit。"""
 
     def __init__(self, cat_cols=None, num_cols=None):
@@ -48,9 +48,11 @@ class FeatureProcessor:
         out = pd.DataFrame(index=df.index)
         for c in self.cat_cols:
             m = self._cat_maps[c]
-            out[c] = df[c].astype(str).fillna("nan").map(m).fillna(0).astype("int64")
+            codes = df[c].astype(str).fillna("nan").map(m).fillna(0).astype("int64")
+            cardinality = len(m) + 1
+            out[c] = codes / cardinality          # bounded [0, 1)
         for c in self.num_cols:
             col = df[c].astype("float64")
-            out[c] = ((col - self._num_mean[c]) / self._num_std[c]).fillna(0.0)
+            out[c] = ((col - self._num_mean[c]) / self._num_std[c]).fillna(0.0).clip(-10.0, 10.0)
             out[f"{c}__isna"] = col.isna().astype("float32")
         return out
