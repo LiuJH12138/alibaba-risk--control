@@ -23,7 +23,7 @@ def _evaluate(model, loader, device) -> dict:
                       b["x"].to(device), b["edge_index"].to(device),
                       b["seed_local"].to(device))
         scores.append(torch.sigmoid(logit).cpu().numpy())
-        labels.append(b["label"].numpy())
+        labels.append(b["label"].cpu().numpy())
     return compute_metrics(np.concatenate(labels), np.concatenate(scores))
 
 def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
@@ -34,6 +34,10 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
     model = FraudModel(feat_dim, model_cfg, fusion_mode=fusion_mode).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                             weight_decay=train_cfg["weight_decay"])
+    warmup = train_cfg["warmup_steps"]
+    def _lr_lambda(step):
+        return min(1.0, (step + 1) / max(1, warmup))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, _lr_lambda)
     loss_fn = HybridFocalLoss(train_cfg["focal_gamma_pos"],
                               train_cfg["focal_gamma_neg"],
                               train_cfg["focal_alpha"], reduction="none")
@@ -62,6 +66,7 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg["grad_clip"])
             opt.step()
+            scheduler.step()
         metrics = _evaluate(model, val_loader, device)
         if metrics["pr_auc"] > best_pr:
             best_pr, best_metrics, patience = metrics["pr_auc"], metrics, 0
