@@ -1,0 +1,306 @@
+# 设计日志(DESIGN JOURNAL)
+
+版本化、累积式设计记录。每次设计更新**追加新版本小节**,不覆盖旧记录。
+
+---
+
+## v1 (2026-05-15) — Stage 1 初始设计与执行
+
+### 设计决策
+
+#### 决策 1:路线 A —— 双塔融合一体化模型
+
+**设计初衷:**
+简历描述的是行为序列 + 图 + 损失 + 部署联动的一个系统。Stage 1 目标是用一个端到端
+MVP 覆盖全链路,验证架构可行性,而非追求最优单项指标。
+
+**原理:**
+- 序列塔捕捉用户自身时序行为(Transformer 做全局上下文感知,GRU 做近因压缩);
+- 图塔捕捉跨实体结构信号(团伙、资金归集、设备复用等图上涌现的欺诈模式);
+- 门控融合(gated fusion)逐样本自适应权衡两路信号,而非固定拼接。
+
+**文献支撑:**
+- RAGFormer(arXiv:2402.17472):"GNN 学习全局特征,互补 Transformer 的局部特征",
+  在金融欺诈检测中实证了序列塔与图塔的互补性。
+- ETH-GBERT(arXiv:2501.02032):全局结构信息 + 局部语义动态融合,与本项目门控融合
+  思路一致。
+
+---
+
+#### 决策 2:Transformer → GRU 顺序(序列塔内部)
+
+**设计初衷:**
+给当前交易打分,需要"用户当前状态 + 全局上下文"的表示,而非序列中每个位置的表示。
+
+**原理:**
+Transformer 自注意力先把序列每步做全局重表示(跨步依赖、长程模式);GRU 再以近因偏置
+将序列压缩成末隐状态(h_n),对应当前交易时刻的用户状态。Transformer 保持浅层(1–2 层)
+以避免与 GRU 职责重叠。前向 padding 下,h_n 自然落在当前交易位置。
+
+**文献支撑:**
+- FTT-GRU(arXiv:2511.00564):Transformer 特征提取 + GRU 时序建模的串联结构在序列
+  欺诈检测中的应用。
+- Attention-Based Transformer + GRU(MDPI Mathematics 13(9):1484):Transformer-GRU
+  串联架构在时序分类任务中的系统性验证。
+
+---
+
+#### 决策 3:Hybrid Focal Loss = 非对称 Focal + 类别平衡 α
+
+**设计初衷:**
+IEEE-CIS 欺诈率约 3.5%,生产场景更达万分位级不平衡,需在保召回的同时压误伤。
+单一交叉熵或标准 Focal Loss 对欺诈/正常样本的难度不对称处理不足。
+
+**原理:**
+- `γ_pos ≠ γ_neg`:对欺诈样本(正类)和正常样本(负类)分别设置聚焦系数,提供
+  召回/误伤调节旋钮;
+- `α`:类别平衡权重,处理正负样本数量悬殊;
+- HNM(OHEM,Online Hard Example Mining):在每个 batch 内选择损失最高的难负样本
+  子集进行梯度更新,专攻"会被误报的难负样本"。
+
+**文献支撑:**
+- Focal Loss(Lin et al., ICCV 2017):原始 Focal Loss,`γ` 下调易分类样本贡献。
+- Asymmetric Loss(Ben-Baruch et al., 2020):正负类非对称 `γ`,即 `γ_pos ≠ γ_neg`
+  设计的直接来源。
+- Class-Balanced Loss(Cui et al., CVPR 2019):有效样本数 `α` 加权的理论基础。
+- OHEM(Shrivastava et al., CVPR 2016):在线难样本挖掘的实现基础。
+
+---
+
+#### 决策 4:图 embedding 离线预计算用于部署
+
+**设计初衷:**
+GNN 的动态图结构(NeighborLoader 子图采样)对 TensorRT ONNX 导出不友好——动态拓扑
+无法静态化为固定计算图。
+
+**原理:**
+- **训练时:**NeighborLoader 驱动联合训练(图塔 + 序列塔端到端梯度);
+- **部署时:**图 embedding 离线预计算并存入查找表(lookup table),在线推理只需
+  查表取 embedding,序列塔 + 融合头走 ONNX/TensorRT 静态图,保证低延迟可部署。
+
+这一分离也使得 ONNX 导出路径仅需处理序列塔,绕开了 GNN 动态图的 ONNX 限制。
+
+---
+
+#### 决策 5:uid 合成用 card1 + addr1 + (day − D1) 启发式
+
+**设计初衷:**
+IEEE-CIS 数据集没有显式用户 ID,但行为序列塔需要按用户聚合历史交易。
+
+**原理:**
+`uid = hash(card1, addr1, floor((TransactionDT − min_DT) / 86400))` 即"同卡 + 同地址 +
+同天"归为同一 uid。这是社区广泛使用的标准启发式。
+
+**局限(诚实记录):**
+此为代理 uid(proxy),非真实 ground truth。同一用户若换卡/换地址则切割为多 uid;
+不同用户若共享设备/地址则可能合并。这是 IEEE-CIS 数据的固有局限,行为序列信号
+因此有噪声。
+
+---
+
+### 执行中发现的问题与修复(诚实记录)
+
+#### Bug 1:特征矩阵 NaN —— 类别编码溢出导致激活爆炸
+
+**commit:** `ce6f459`
+
+**现象:** 模型前向传播产生 NaN;注意力分数溢出。
+
+**根本原因:** `FeatureProcessor` 将类别字段的原始整数编码(例如 card1 编码最大值达 12730)
+直接混入 float 特征矩阵,未做归一化。高值类别编码与数值特征混合后,激活值溢出
+→ Softmax 输入 ±∞ → 注意力分数 NaN。
+
+**修复:** 类别编码按基数缩放到 [0, 1):$x_{cat} = \text{code} / \text{cardinality}$;
+数值标准化值裁剪到 [-10, 10],防止异常值穿透。
+
+**代价/遗留:** 缩放序数编码是 NaN 修复的应急方案,损失了类别语义(embedding 层
+才能学到类别间相似性)。proper categorical embedding 留 Stage 2。
+
+---
+
+#### Bug 2:train.py GPU 兼容 + 缺学习率 warmup
+
+**commit:** `eaa0a95`
+
+**现象 1:** `_evaluate` 函数在 GPU 张量上直接调用 `.numpy()` 崩溃
+(`RuntimeError: can't convert CUDA tensor to numpy`).
+
+**现象 2:** 配置文件中存在 `warmup_steps` 配置项,但训练循环从未使用它——
+学习率从训练开始就按 cosine schedule 衰减,缺少预热阶段。
+
+**修复 1:** 所有评估路径的张量调用 `.cpu().numpy()`。
+
+**修复 2:** 加入线性 LR warmup 调度器:前 `warmup_steps` 步线性升至目标 LR,
+之后切换 cosine decay。
+
+---
+
+#### Bug 3:SequenceTower pack_padded_sequence 与前向 padding 不兼容
+
+**commit:** `dab5952`
+
+**现象:** seq_only 配置 roc_auc 仅 0.55(接近随机),且无法导出 ONNX
+(动态序列长度使 pack_padded_sequence 的 ONNX trace 失败)。
+
+**根本原因:** 数据构建用**前向 padding**(历史记录填在序列末尾,开头为零 padding),
+但 `pack_padded_sequence` 假设数据从序列开头排列——对历史长度 < seq_len/2 的交易,
+GRU 打包后只处理全零 padding,实际有效历史完全被忽略 → GRU 输出常量向量,
+等价于序列塔无效。
+
+**修复:** 改用 plain GRU 处理整个固定长度序列(不打包),`h_n` 自然落在最后一个时间步
+(当前交易),正确读取前向 padding 下的末位状态。
+
+**效果:** seq_only roc_auc: 0.55 → **0.844**(修复后)。ONNX 导出路径同步解锁。
+
+---
+
+#### Bug 4:build_trt.py TensorRT 8.x API 与 TensorRT 10.x 不兼容
+
+**commit:** `03113c2`
+
+**现象:** TensorRT 引擎编译脚本在 TRT 10.16 环境下抛出 AttributeError / TypeError。
+
+**根本原因(三处 API 变更,TRT 8→10):**
+1. `trt.MemoryPoolFlag` → 应为 `trt.MemoryPoolType`(枚举名变更);
+2. `EXPLICIT_BATCH` flag 处理方式变更(TRT 10 默认 explicit batch);
+3. `IHostMemory` 写入接口变更(`.tobytes()` / buffer protocol 变化)。
+
+**修复:** 按 TRT 10.x API 重写相关调用,并在 `run_benchmark` 中对每个配置独立
+`try/except`——任一配置失败记录为 skipped 而不中断整体 benchmark,保证结果
+文件完整写出。
+
+---
+
+### Stage 1 偏离设计文档之处(诚实记录)
+
+#### 偏离 1:V 列削减到 V1–V50
+
+**设计文档预期:** 使用 IEEE-CIS 全部特征(Vesta 工程特征 V1–V339 + 其他字段,
+展开后约 791 列)。
+
+**实际执行:** 只保留 V1–V50,feat_dim = 213,seq_all.pt 约 15GB。
+
+**原因:** 完整特征集 × seq_len=32 × 59 万行,seq_all.pt 约 60GB,超出 AutoDL
+50GB 数据盘限制。
+
+**代价:** 丢弃了 Vesta 大量有信号的工程特征。这是本 Stage 1 所有深度模型
+AUC 偏低的原因之一。V 列完整利用留 Stage 2(需更大存储或更激进压缩)。
+
+---
+
+#### 偏离 2:类别字段用「缩放序数编码」而非 embedding 层
+
+**设计文档预期(§5.1):** 类别字段(card1、card2、addr1、addr2、P_emaildomain 等)
+进入独立 embedding 层,学习类别间语义相似性。
+
+**实际执行:** 缩放序数编码(code / cardinality → [0,1)),作为 Bug 1 NaN 修复的
+应急方案。
+
+**代价:** 丢失类别语义;card1 的 12730 个值被压成 [0,1) 的标量,模型无法区分
+不同类别的语义距离。这是 AUC 偏低的另一原因。proper embedding 留 Stage 2。
+
+---
+
+#### 偏离 3:kaggle CLI 版本 1.6.17 → 2.1.2
+
+**原因:** 新版 Kaggle API token 格式(KGAT_ 前缀)需要新版 CLI。执行中升级。
+
+---
+
+#### 偏离 4:PMML 导出列为已知遗留项
+
+**设计文档预期:** LightGBM 基线训练后导出 PMML 文件,验证异构部署链路。
+
+**实际执行:** LightGBM 基线训练成功(roc_auc 0.9076,已入 results.json),但
+PMML 导出受 sklearn2pmml/JPMML 与 numpy 2.x 兼容性问题阻塞——需要
+sklearn2pmml 0.130+ 以及 Java 11+;Java 11+ 工具链在本 AutoDL 环境安装极慢。
+
+**结论:** PMML 文件导出列为 Stage 1 已知遗留项;完整 PMML/异构部署归 Stage 3。
+
+---
+
+### 实验结果与诚实分析
+
+#### 架构与损失消融(深度模型 + LightGBM 基线)
+
+数据集:590,540 笔交易,欺诈率 3.5%,训练集 472,432 / 验证集 118,108(时序切分),
+feat_dim 213,seq_len 32,图边数 819,861。
+
+| 配置 | roc_auc | pr_auc | ks | recall@fpr=.01 | fpr@recall=.90 |
+|---|---|---|---|---|---|
+| seq_only | 0.8438 | 0.4211 | 0.5499 | 0.3632 | 0.5335 |
+| graph_only | 0.8481 | 0.3911 | 0.5402 | 0.3376 | 0.4730 |
+| concat_fusion | 0.8491 | 0.4241 | 0.5521 | 0.3652 | 0.4945 |
+| gated_fusion | 0.8412 | 0.4041 | 0.5348 | 0.3521 | 0.5115 |
+| gated_plus_hnm | 0.8187 | 0.3144 | 0.4849 | 0.2562 | 0.5444 |
+| lgbm_baseline | 0.9076 | 0.4813 | 0.6555 | 0.4050 | 0.2759 |
+
+#### 延迟 benchmark(batch=1 单请求)
+
+| 配置 | p50_ms | p95_ms | p99_ms | mean_ms |
+|---|---|---|---|---|
+| pytorch_cpu | 9.37 | 78.32 | 84.11 | 25.62 |
+| pytorch_gpu | 1.33 | 1.36 | 1.38 | 1.34 |
+| onnx_gpu | SKIPPED | — | — | — |
+| tensorrt_fp16 | SKIPPED | — | — | — |
+
+onnx_gpu 跳过原因:`CUDAExecutionProvider not active`;cuDNN/onnxruntime-gpu ABI 不兼容。
+
+tensorrt_fp16 跳过原因:`TensorrtExecutionProvider not active`;同 cuDNN 问题。
+TensorRT FP16 引擎**本身编译成功**(artifacts/online.engine,1.6MB)——仅 ORT 的
+TensorRT 执行提供器无法加载。
+
+#### 诚实分析
+
+1. **双塔弱互补(与设计预判一致):**
+   concat_fusion(0.849)边际超过单塔 seq_only(0.844)和 graph_only(0.848)。
+   融合有增益但很小。原因:IEEE-CIS 是构造图(device、email、card 等字段的
+   启发式连边),非真实社交/转账图,图信号强度中等。强图效果留 Stage 2 异质图深化。
+
+2. **门控融合未超过简单拼接:**
+   gated_fusion(0.841)< concat_fusion(0.849)。门控机制在本 Stage 1 设置下
+   未带来增益——可能是门控参数训练不稳定,或特征质量不足以驱动有效门控。
+
+3. **HNM 有害(诚实负面结果):**
+   gated_plus_hnm(0.819)是所有配置最差。roc_auc、pr_auc、ks 全面下降,
+   fpr@recall0.90 反而升高(误伤更多,与设计假设相反)。推测:Stage 1 简化特征
+   下,HNM 筛出的"难负样本"可能是噪声标签或分布边缘样本,梯度信号反而干扰。
+   HNM 深化留 Stage 2。
+
+4. **LightGBM 基线反超所有深度配置(roc_auc 0.908 vs 深度模型最高 0.849):**
+   典型的表格数据现象。梯度提升树在本 Stage 1 简化条件下(缩放序数编码 +
+   V 列削减 + 单一特征集)碾压深度双塔。深度模型优势场景需要:proper embedding
+   捕捉类别语义、完整 V 列特征、异质图结构——均留 Stage 2。
+
+5. **延迟:pytorch CPU→GPU 约 7× 加速(9.4ms → 1.3ms):**
+   这是核心的 before/after 对比,真实数字。TRT FP16 链路已通(引擎可编译),
+   ORT-GPU EP 集成受 cuDNN ABI 阻塞,端到端 TRT 延迟归 Stage 3 测量。
+
+---
+
+### 诚实前提(设计时已声明,执行验证)
+
+- **"模型互补"是经验性结论,由架构消融验证** —— 实验显示融合仅带来边际增益
+  (concat 0.849 vs 单塔 ~0.845),即弱互补,与设计预判一致(IEEE-CIS 构造图
+  信号中等;强图故事留 Stage 2 异质图)。
+
+- **"HNM 降误伤"未被本 Stage 1 设置证实** —— gated_plus_hnm 反而更差
+  (诚实负面结果)。
+
+- **简历业务数字(AUC 0.98、资损 -8%)绑定蚂蚁专有数据,不复现。** 本项目
+  所有数字均为 IEEE-CIS 公开数据上的真实结果。
+
+---
+
+### 参考文献
+
+1. **Focal Loss:** T.-Y. Lin et al., "Focal Loss for Dense Object Detection," ICCV 2017.
+2. **Asymmetric Loss (ASL):** E. Ben-Baruch et al., "Asymmetric Loss For Multi-Label Classification," 2020.
+3. **Class-Balanced Loss:** Y. Cui et al., "Class-Balanced Loss Based on Effective Number of Samples," CVPR 2019.
+4. **OHEM:** A. Shrivastava et al., "Training Region-based Object Detectors with Online Hard Example Mining," CVPR 2016.
+5. **FTT-GRU:** arXiv:2511.00564 — "FTT-GRU: Feature-based Transformer and GRU for Fraud Detection."
+6. **RAGFormer:** arXiv:2402.17472 — "RAGFormer: Retrieval-Augmented Graph Transformer for Financial Fraud Detection."
+7. **ETH-GBERT:** arXiv:2501.02032 — "ETH-GBERT: Global Structure + Local Semantic Dynamic Fusion for Transaction Fraud Detection."
+8. **GraphSAGE:** W. Hamilton et al., "Inductive Representation Learning on Large Graphs," NeurIPS 2017.
+9. **IEEE-CIS Fraud Detection Dataset:** Kaggle / Vesta Corporation, IEEE-CIS Fraud Detection Competition, 2019.
+10. **Attention-Based Transformer + GRU:** MDPI Mathematics 13(9):1484.
