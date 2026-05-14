@@ -1,0 +1,12 @@
+torch-geometric==2.6.1
+kaggle==1.6.17
+lightgbm==4.5.0
+sklearn2pmml==0.110.0
+onnx==1.17.0
+onnxruntime-gpu==1.20.1
+scikit-learn==1.5.2
+pandas==2.2.3
+pyarrow==18.0.0
+pyyaml==6.0.2
+pytest==8.3.3
+tqdm==4.67.1
