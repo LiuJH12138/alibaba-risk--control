@@ -1,0 +1,10 @@
+d_model: 128
+n_heads: 4
+n_transformer_layers: 2
+d_seq: 128                  # GRU hidden
+d_graph: 128
+graphsage_layers: 2
+d_fuse: 128
+mlp_hidden: 64
+dropout: 0.1
+cat_emb_dim: 16             # 每个类别字段 embedding 维
