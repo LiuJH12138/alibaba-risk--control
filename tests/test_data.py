@@ -63,3 +63,23 @@ def test_processor_meta_has_cardinalities():
     # 基数 = 不同类别数 + 1(unknown 桶)
     assert fp.meta["cat_cardinalities"]["ProductCD"] == 3
     assert fp.meta["num_cols"] == ["TransactionAmt"]
+
+import numpy as np
+from src.data.sequence import build_sequences
+
+def test_sequence_window_and_mask():
+    # 2 个 uid,uid "x" 有 3 笔,uid "y" 有 1 笔
+    feat = np.array([[1.0], [2.0], [3.0], [9.0]], dtype="float32")
+    uid = np.array(["x", "x", "x", "y"])
+    dt = np.array([10, 20, 30, 5])
+    seq, mask = build_sequences(feat, uid, dt, seq_len=2)
+    # 第 3 笔(uid x,dt=30)序列 = 前 2 笔 [feat0, feat1]? 不:含自身,窗口=自身+前1
+    # 约定:位置 L-1 是当前交易,L-2..0 是更早的;不足则前端 padding
+    assert seq.shape == (4, 2, 1)
+    assert mask.shape == (4, 2)
+    # uid y 只有 1 笔 → 位置 0 padding(mask False),位置 1 是自身
+    yi = 3
+    assert mask[yi].tolist() == [False, True]
+    assert seq[yi, 1, 0] == 9.0
+    # uid x 第 1 笔(dt=10)→ 位置 0 padding,位置 1 自身
+    assert mask[0].tolist() == [False, True]
