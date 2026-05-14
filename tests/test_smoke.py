@@ -1,6 +1,7 @@
 import torch
 from torch_geometric.data import Data
 from src.train import train_one_config
+from src.baseline_lgbm import train_lgbm_baseline
 
 def test_train_one_config_runs_and_returns_metrics(tmp_path):
     n = 200
@@ -23,3 +24,11 @@ def test_train_one_config_runs_and_returns_metrics(tmp_path):
         device="cpu")
     assert "roc_auc" in result and "pr_auc" in result
     assert 0.0 <= result["roc_auc"] <= 1.0
+
+def test_lgbm_baseline_runs(tmp_path):
+    import numpy as np
+    rng = np.random.default_rng(0)
+    x_train = rng.normal(size=(300, 10)); y_train = (x_train[:, 0] > 0).astype(float)
+    x_val = rng.normal(size=(100, 10)); y_val = (x_val[:, 0] > 0).astype(float)
+    metrics, model = train_lgbm_baseline(x_train, y_train, x_val, y_val)
+    assert metrics["roc_auc"] > 0.9        # x[:,0] 强信号,应学得到
