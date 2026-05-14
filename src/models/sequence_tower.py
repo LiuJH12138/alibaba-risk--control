@@ -25,10 +25,10 @@ class SequenceTower(nn.Module):
         # Transformer 的 padding mask:True = 忽略
         pad_mask = ~mask
         h = self.transformer(h, src_key_padding_mask=pad_mask)
-        # padding 位置清零,避免污染 GRU
+        # padding 位置清零;数据为前向 padding(真实数据在末尾),
+        # plain GRU 顺序处理整个序列,h_n 即末位置(当前交易)的隐状态。
+        # 不用 pack_padded_sequence:它假设 padding 在末尾,与本项目的前向 padding 不符,
+        # 且 pack 不可 ONNX 导出。
         h = h.masked_fill(~mask.unsqueeze(-1), 0.0)
-        lengths = mask.sum(dim=1).clamp(min=1).cpu()
-        packed = nn.utils.rnn.pack_padded_sequence(
-            h, lengths, batch_first=True, enforce_sorted=False)
-        _, h_n = self.gru(packed)            # h_n [1, B, d_seq]
+        _, h_n = self.gru(h)                 # h_n [1, B, d_seq]
         return h_n.squeeze(0)
