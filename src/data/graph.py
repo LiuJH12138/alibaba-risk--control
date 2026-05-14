@@ -1,6 +1,7 @@
 import numpy as np
 
-SENTINEL = -1  # 缺失填充值,不据此连边
+SENTINEL = -1        # 整数列的缺失填充哨兵
+STR_SENTINEL = "__MISSING__"  # 字符串列的缺失填充哨兵
 
 def build_edges(df, entity_cols, max_degree, max_per_entity):
     """构造 time-respecting 同构交易图的边。
@@ -11,14 +12,22 @@ def build_edges(df, entity_cols, max_degree, max_per_entity):
     dt = df["TransactionDT"].to_numpy()
     src_list, dst_list = [], []
     for col in entity_cols:
-        vals = df[col].fillna(SENTINEL).to_numpy()
+        raw = df[col]
+        # 根据列的实际值类型选择合适的哨兵,避免混合类型导致 argsort 失败
+        if raw.dtype == object or str(raw.dtype) == "string":
+            # 字符串列:fillna 用字符串哨兵,保证 argsort 可比较
+            sentinel = STR_SENTINEL
+            vals = raw.fillna(sentinel).astype(str).to_numpy()
+        else:
+            sentinel = SENTINEL
+            vals = raw.fillna(sentinel).to_numpy()
         # 按实体值分组
         order = np.argsort(vals, kind="stable")
         sv = vals[order]
         gs = 0
         for i in range(1, len(sv) + 1):
             if i == len(sv) or sv[i] != sv[gs]:
-                if sv[gs] != SENTINEL and i - gs > 1:
+                if sv[gs] != sentinel and i - gs > 1:
                     members = order[gs:i]
                     members = members[np.argsort(dt[members], kind="stable")]
                     if len(members) > max_per_entity:

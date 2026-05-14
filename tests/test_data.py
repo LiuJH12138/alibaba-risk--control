@@ -9,6 +9,8 @@ from src.data.sequence import build_sequences
 from src.data.graph import build_edges
 
 
+from src.data.build import time_split, validate_split
+
 def test_load_config_returns_dict():
     cfg = load_config("data")
     assert isinstance(cfg, dict)
@@ -109,3 +111,20 @@ def test_edges_skip_sentinel_entity():
     df = pd.DataFrame({"card1": [-1, -1], "addr1": [-1, -1], "TransactionDT": [10, 20]})
     src, dst = build_edges(df, entity_cols=["card1", "addr1"], max_degree=10, max_per_entity=10)
     assert len(src) == 0
+
+
+def test_time_split_is_chronological():
+    dt = np.array([5, 1, 9, 3, 7])   # 乱序时间戳
+    train_idx, val_idx = time_split(dt, ratio=0.6)
+    # train 应是最早的 3 个(dt 1,3,5),val 是最晚 2 个(dt 7,9)
+    assert set(dt[train_idx].tolist()) == {1, 3, 5}
+    assert set(dt[val_idx].tolist()) == {7, 9}
+    # 无重叠
+    assert len(set(train_idx.tolist()) & set(val_idx.tolist())) == 0
+
+
+def test_validate_split_rejects_leak():
+    dt = np.array([1, 2, 3, 4])
+    # 故意构造泄漏:train 含 dt=4,val 含 dt=1
+    with pytest.raises(AssertionError):
+        validate_split(dt, train_idx=np.array([0, 3]), val_idx=np.array([1, 2]))
