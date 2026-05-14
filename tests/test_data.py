@@ -22,3 +22,22 @@ def test_join_left_keeps_all_transactions():
     assert len(merged) == 3
     assert merged.loc[merged.TransactionID == 1, "DeviceType"].isna().all()
     assert merged.loc[merged.TransactionID == 2, "DeviceType"].iloc[0] == "mobile"
+
+from src.data.uid import synthesize_uid
+
+def test_uid_groups_same_card_addr():
+    txn = pd.DataFrame({
+        "card1": [1000, 1000, 2000],
+        "addr1": [50.0, 50.0, 80.0],
+        "TransactionDT": [86400, 172800, 86400],  # day1, day2, day1
+        "D1": [0.0, 1.0, 0.0],                     # days since first txn
+    })
+    uid = synthesize_uid(txn)
+    assert uid.iloc[0] == uid.iloc[1]   # same card same account
+    assert uid.iloc[0] != uid.iloc[2]
+
+def test_uid_handles_nan():
+    txn = pd.DataFrame({"card1": [1000], "addr1": [float("nan")],
+                        "TransactionDT": [86400], "D1": [float("nan")]})
+    uid = synthesize_uid(txn)
+    assert uid.notna().all()
