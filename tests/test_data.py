@@ -41,3 +41,25 @@ def test_uid_handles_nan():
                         "TransactionDT": [86400], "D1": [float("nan")]})
     uid = synthesize_uid(txn)
     assert uid.notna().all()
+
+from src.data.features import FeatureProcessor
+
+def test_processor_fits_on_train_only():
+    train = pd.DataFrame({"ProductCD": ["A", "B"], "TransactionAmt": [10.0, 20.0]})
+    val = pd.DataFrame({"ProductCD": ["A", "C"], "TransactionAmt": [30.0, 40.0]})
+    fp = FeatureProcessor(cat_cols=["ProductCD"], num_cols=["TransactionAmt"])
+    fp.fit(train)
+    tr = fp.transform(train)
+    va = fp.transform(val)
+    # 未见类别 "C" 映射到 0(unknown 桶),不报错
+    assert va["ProductCD"].iloc[1] == 0
+    # 数值标准化用 train 统计量:train 均值处 ~0
+    assert abs(tr["TransactionAmt"].mean()) < 1e-6
+
+def test_processor_meta_has_cardinalities():
+    train = pd.DataFrame({"ProductCD": ["A", "B"], "TransactionAmt": [10.0, 20.0]})
+    fp = FeatureProcessor(cat_cols=["ProductCD"], num_cols=["TransactionAmt"])
+    fp.fit(train)
+    # 基数 = 不同类别数 + 1(unknown 桶)
+    assert fp.meta["cat_cardinalities"]["ProductCD"] == 3
+    assert fp.meta["num_cols"] == ["TransactionAmt"]
