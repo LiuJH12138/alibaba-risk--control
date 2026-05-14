@@ -66,7 +66,8 @@ def run_benchmark():
     mcfg = load_config("model")
     dcfg = load_config("data")
     seq_len = dcfg["seq_len"]
-    feat_dim = json.load(open("data/processed/manifest.json"))["feat_dim"]
+    with open("data/processed/manifest.json") as f:
+        feat_dim = json.load(f)["feat_dim"]
     d_graph = mcfg["d_graph"]
 
     model = FraudModel(feat_dim, mcfg, fusion_mode="gated")
@@ -95,6 +96,7 @@ def run_benchmark():
     else:
         results["tensorrt_fp16"] = {"skipped": "TensorRT not available"}
 
+    Path("experiments").mkdir(exist_ok=True)
     with open("experiments/benchmark.json", "w") as f:
         json.dump(results, f, indent=2)
     for k, v in results.items():
