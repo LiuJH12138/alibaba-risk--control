@@ -13,8 +13,6 @@ from src.data.sequence import build_sequences
 from src.data.graph import build_edges
 from src.data.v_pruning import compute_pruned_v_cols
 
-V_PRUNED_CACHE = "data/processed/v_pruned_cols.json"
-
 
 def time_split(dt: np.ndarray, ratio: float):
     order = np.argsort(dt, kind="stable")
@@ -27,13 +25,13 @@ def validate_split(dt, train_idx, val_idx):
     assert dt[train_idx].max() <= dt[val_idx].min(), "time leak: train overlaps val"
 
 
-def _resolve_num_cols(df_train, v_strategy: str) -> list[str]:
+def _resolve_num_cols(df_train, v_strategy: str, processed_dir: str) -> list[str]:
     """根据 v_strategy 决定使用哪些 num cols。pruned 结果缓存。"""
     non_v_num = [c for c in DEFAULT_NUM_COLS if not (c.startswith("V") and c[1:].isdigit())]
     if v_strategy == "full_v":
         v_cols = [f"V{i}" for i in range(1, 340)]
     elif v_strategy == "pruned_v":
-        cache = Path(V_PRUNED_CACHE)
+        cache = Path(processed_dir) / "v_pruned_cols.json"
         if cache.exists():
             v_cols = json.loads(cache.read_text())
         else:
@@ -61,7 +59,7 @@ def build_all(v_strategy: str = "full_v"):
     train_idx, val_idx = time_split(dt, cfg["split_ratio"])
     validate_split(dt, train_idx, val_idx)
 
-    num_cols = _resolve_num_cols(df.iloc[train_idx], v_strategy)
+    num_cols = _resolve_num_cols(df.iloc[train_idx], v_strategy, cfg["processed_dir"])
     fp = FeatureProcessor(num_cols=num_cols)         # 仍用默认 cat_cols
     fp.fit(df.iloc[train_idx])
     feat = fp.transform(df)                          # dict: {cat_idx, num}
@@ -72,8 +70,11 @@ def build_all(v_strategy: str = "full_v"):
     # 序列:对 cat 和 num 分别构造,共享 mask
     seq_cat, mask = build_sequences(feat["cat_idx"].astype("float32"),
                                     df["uid"].to_numpy(), dt, cfg["seq_len"])
-    seq_num, _   = build_sequences(feat["num"],
-                                    df["uid"].to_numpy(), dt, cfg["seq_len"])
+    seq_num, mask2 = build_sequences(feat["num"],
+                                      df["uid"].to_numpy(), dt, cfg["seq_len"])
+    # 两次 build_sequences 用同 uid/dt,mask 应严格一致 —— 显式断言防 build_sequences
+    # 未来加 feat-shape-依赖逻辑时静默引入 bug
+    assert np.array_equal(mask, mask2), "masks diverged between cat and num seq builds"
     seq_cat = seq_cat.astype("int64")                # 还原 dtype
 
     src, dst = build_edges(df, cfg["graph_entity_cols"],
@@ -96,7 +97,8 @@ def build_all(v_strategy: str = "full_v"):
         json.dump(fp.meta, f, indent=2)
 
     fr = float(y.mean())
-    assert abs(fr - cfg["expected_fraud_rate"]) < cfg["fraud_rate_tol"]
+    assert abs(fr - cfg["expected_fraud_rate"]) < cfg["fraud_rate_tol"], \
+        f"fraud rate {fr} off expected"
     assert graph.edge_index.shape[1] == 0 or (dt[src] <= dt[dst]).all(), \
         "graph has non-time-respecting edges"
     manifest = {
