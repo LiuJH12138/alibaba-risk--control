@@ -1,0 +1,31 @@
+{
+  "hetero_baseline": {
+    "roc_auc": 0.8254947039020994,
+    "pr_auc": 0.39653464950128325,
+    "ks": 0.5390092392851826,
+    "recall_at_fpr_0.01": 0.35802165354330706,
+    "fpr_at_recall_0.90": 0.6481796499596647,
+    "audit": {
+      "best_epoch": 13,
+      "total_epochs": 21,
+      "last5_pr_auc": [
+        0.37107834288001174,
+        0.377802138362222,
+        0.3862629194078049,
+        0.3749302631308633,
+        0.36507454035164144
+      ],
+      "warnings": [
+        "\u26a0\ufe0f  \u672b 5 epoch val_pr_auc \u9707\u8361 > 0.02 (oscillation),\u672a\u6536\u655b"
+      ]
+    },
+    "converged": false,
+    "train_seconds": 961.2,
+    "v_strategy": "pruned_v",
+    "config": {
+      "name": "hetero_baseline",
+      "use_hnm": false,
+      "loss_overrides": {}
+    }
+  }
+}

@@ -6,4 +6,5 @@ __pycache__/
 *.engine
 *.onnx
 experiments/*.png
+!experiments/curves_*.png
 !artifacts/online_*.onnx
