@@ -3,6 +3,7 @@ from src.models.sequence_tower import SequenceTower
 from src.models.graph_tower import GraphTower
 from src.models.fusion import FusionHead
 from src.models.fraud_model import FraudModel
+from src.models.embedding_mixer import EmbeddingMixer
 from src.dataset import make_loader
 from torch_geometric.data import Data
 
@@ -106,3 +107,26 @@ def test_loader_yields_aligned_seq_and_seeds():
     assert batch["seed_local"].shape[0] == batch["seq"].shape[0]
     # seed 局部索引指向子图内节点
     assert batch["seed_local"].max() < batch["x"].shape[0]
+
+def test_embedding_mixer_output_shape_2d_and_3d():
+    mixer = EmbeddingMixer(cat_cardinalities=[5, 10, 7], cat_emb_dim=4, n_num_total=8)
+    # 2D input: [B, n_cat] / [B, n_num_total]
+    cat = torch.tensor([[1, 5, 3], [4, 0, 6], [2, 8, 0]])
+    num = torch.randn(3, 8)
+    out = mixer(cat, num)
+    assert out.shape == (3, 3 * 4 + 8)   # 12 + 8 = 20
+
+    # 3D input: [B, L, n_cat] / [B, L, n_num_total]
+    cat3 = torch.tensor([[[1, 5, 3], [2, 0, 6]]])
+    num3 = torch.randn(1, 2, 8)
+    out3 = mixer(cat3, num3)
+    assert out3.shape == (1, 2, 20)
+    assert mixer.out_dim == 20
+
+def test_embedding_mixer_handles_unknown_index_zero():
+    mixer = EmbeddingMixer(cat_cardinalities=[5, 10], cat_emb_dim=4, n_num_total=2)
+    cat = torch.tensor([[0, 0]])     # 双 unknown 桶
+    num = torch.zeros(1, 2)
+    out = mixer(cat, num)
+    assert out.shape == (1, 2 * 4 + 2)
+    assert torch.isfinite(out).all()
