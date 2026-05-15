@@ -92,21 +92,26 @@ def test_fraud_model_online_forward_uses_precomputed_graph_emb():
 
 def test_loader_yields_aligned_seq_and_seeds():
     n = 40
-    graph = Data(x=torch.randn(n, 8),
+    graph = Data(cat_x=torch.randint(0, 3, (n, 5)),       # 5 个 cat 字段
+                 num_x=torch.randn(n, 8),                 # 8 num 维(已含 isna)
                  edge_index=torch.randint(0, n, (2, 120)),
                  y=(torch.rand(n) > 0.9).float(),
                  t=torch.arange(n))
-    seq_all = {"seq": torch.randn(n, 6, 8), "mask": torch.ones(n, 6, dtype=torch.bool)}
+    seq_all = {"cat": torch.randint(0, 3, (n, 6, 5)),
+               "num": torch.randn(n, 6, 8),
+               "mask": torch.ones(n, 6, dtype=torch.bool)}
     idx = torch.arange(0, 20)
     loader = make_loader(graph, seq_all, idx, batch_size=8,
                          neighbor_sample=[10, 5], shuffle=False)
     batch = next(iter(loader))
-    # batch 应含:子图(x, edge_index)、seed 局部索引、对齐的 seq/mask/label
-    assert batch["seq"].shape[0] == batch["label"].shape[0]
-    assert batch["seq"].shape[0] <= 8
-    assert batch["seed_local"].shape[0] == batch["seq"].shape[0]
-    # seed 局部索引指向子图内节点
-    assert batch["seed_local"].max() < batch["x"].shape[0]
+    # dict 接口:含 x_cat/x_num/seq_cat/seq_num/mask/seed_local/label/edge_index
+    expected_keys = {"x_cat", "x_num", "edge_index", "seed_local",
+                     "seq_cat", "seq_num", "mask", "label"}
+    assert set(batch.keys()) == expected_keys
+    # 形状一致性
+    assert batch["seq_cat"].shape[0] == batch["label"].shape[0]
+    assert batch["seq_cat"].shape[0] <= 8
+    assert batch["seed_local"].max() < batch["x_cat"].shape[0]
 
 def test_embedding_mixer_output_shape_2d_and_3d():
     mixer = EmbeddingMixer(cat_cardinalities=[5, 10, 7], cat_emb_dim=4, n_num_total=8)
