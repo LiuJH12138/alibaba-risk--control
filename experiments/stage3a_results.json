@@ -27,5 +27,36 @@
       "use_hnm": false,
       "loss_overrides": {}
     }
+  },
+  "hetero_asym_balanced": {
+    "roc_auc": 0.8202554095193815,
+    "pr_auc": 0.42937895261143705,
+    "ks": 0.5087127754531543,
+    "recall_at_fpr_0.01": 0.4109251968503937,
+    "fpr_at_recall_0.90": 0.6377626179369367,
+    "audit": {
+      "best_epoch": 37,
+      "total_epochs": 40,
+      "last5_pr_auc": [
+        0.41750187801498667,
+        0.42937895261143705,
+        0.4287257216347813,
+        0.4198056076781298,
+        0.4198979776684893
+      ],
+      "warnings": []
+    },
+    "converged": true,
+    "train_seconds": 1850.2,
+    "v_strategy": "pruned_v",
+    "config": {
+      "name": "hetero_asym_balanced",
+      "use_hnm": false,
+      "loss_overrides": {
+        "focal_gamma_pos": 2.0,
+        "focal_gamma_neg": 6.0,
+        "focal_alpha": 0.4
+      }
+    }
   }
 }
