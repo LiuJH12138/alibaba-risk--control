@@ -3,23 +3,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class HybridFocalLoss(nn.Module):
-    """非对称 Focal Loss:正负样本用不同 gamma。
-    gamma_pos/gamma_neg 控制对易例的压制强度,alpha 是正类权重。
-    gamma_pos=gamma_neg=0 时退化为 BCE(alpha=0.5)。数值稳定:基于 logits。"""
+    """Asymmetric Focal Loss with optional label smoothing.
+
+    Args:
+        gamma_pos / gamma_neg: focal exponents for the positive / negative class
+        alpha:                 positive-class weight (Stage 1/2 = 0.25)
+        label_smoothing_eps:   Stage 3a addition; when > 0, targets are smoothed
+                               t' = t*(1-eps) + 0.5*eps before BCE/focal compute.
+                               eps=0 reproduces Stage 2 behavior bit-for-bit.
+        reduction:             'mean' | 'sum' | 'none'
+    """
 
     def __init__(self, gamma_pos: float = 1.0, gamma_neg: float = 4.0,
-                 alpha: float = 0.25, reduction: str = "mean"):
+                 alpha: float = 0.25, label_smoothing_eps: float = 0.0,
+                 reduction: str = "mean"):
         super().__init__()
         self.gamma_pos = gamma_pos
         self.gamma_neg = gamma_neg
         self.alpha = alpha
+        self.eps = label_smoothing_eps
         self.reduction = reduction
 
     def per_sample(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        # p = sigmoid(logits);p_t = 目标类概率
-        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        # Apply label smoothing on the binary targets before BCE
+        if self.eps > 0.0:
+            t = targets * (1.0 - self.eps) + 0.5 * self.eps
+        else:
+            t = targets
+        bce = F.binary_cross_entropy_with_logits(logits, t, reduction="none")
         p = torch.sigmoid(logits)
-        p_t = p * targets + (1 - p) * (1 - targets)
+        # Use the (post-smoothing) target for p_t / weighting so the formula stays consistent
+        p_t = p * t + (1 - p) * (1 - t)
         gamma = self.gamma_pos * targets + self.gamma_neg * (1 - targets)
         alpha_t = 2 * self.alpha * targets + 2 * (1 - self.alpha) * (1 - targets)
         return alpha_t * (1 - p_t).clamp(min=1e-6) ** gamma * bce
@@ -34,8 +48,8 @@ class HybridFocalLoss(nn.Module):
 
 def hard_negative_mining(per_sample_loss: torch.Tensor, targets: torch.Tensor,
                          neg_pos_ratio: float) -> torch.Tensor:
-    """OHEM:保留全部正样本 + loss 最高的 K 个负样本(K = ratio * 正样本数)。
-    返回 bool mask,True = 参与反向。"""
+    """OHEM: keep all positives + K hardest negatives (K = ratio * n_pos).
+    Returns a bool mask; True = included in backward pass."""
     pos_mask = targets > 0.5
     neg_mask = ~pos_mask
     n_pos = int(pos_mask.sum().item())
