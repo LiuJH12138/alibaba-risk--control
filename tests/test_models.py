@@ -4,8 +4,9 @@ from src.models.graph_tower import GraphTower
 from src.models.fusion import FusionHead
 from src.models.fraud_model import FraudModel
 from src.models.embedding_mixer import EmbeddingMixer
+from src.models.hetero_graph_tower import EntityProjector, HeteroGraphTower
 from src.dataset import make_loader
-from torch_geometric.data import Data
+from torch_geometric.data import Data, HeteroData
 
 def test_sequence_tower_output_shape():
     tower = SequenceTower(feat_dim=16, d_model=32, n_heads=4,
@@ -141,3 +142,70 @@ def test_embedding_mixer_handles_unknown_index_zero():
     out = mixer(cat, num)
     assert out.shape == (1, 2 * 4 + 2)
     assert torch.isfinite(out).all()
+
+
+# ===== Stage 3a: HeteroGraphTower =====
+
+def _tiny_hetero():
+    """Build a minimal HeteroData with 10 transactions + 5 card1 + 3 addr1 + 2 email + 2 device."""
+    hg = HeteroData()
+    hg["transaction"].cat_x = torch.zeros(10, 2, dtype=torch.int64)
+    hg["transaction"].num_x = torch.zeros(10, 4, dtype=torch.float32)
+    hg["transaction"].num_nodes = 10
+    for col, n in [("card1", 5), ("addr1", 3), ("P_emaildomain", 2), ("DeviceInfo", 2)]:
+        hg[col].x = torch.randn(n, 5, dtype=torch.float32)
+        hg[col].num_nodes = n
+    # All 10 transactions point to entity 0 of each type (simplest valid wiring)
+    for col, fwd, rev in [
+        ("card1", "paid_with", "rev_paid_with"),
+        ("addr1", "shipped_to", "rev_shipped_to"),
+        ("P_emaildomain", "sent_to_email", "rev_sent_to_email"),
+        ("DeviceInfo", "on_device", "rev_on_device"),
+    ]:
+        src = torch.arange(10)
+        dst = torch.zeros(10, dtype=torch.int64)
+        hg["transaction", fwd, col].edge_index = torch.stack([src, dst])
+        hg[col, rev, "transaction"].edge_index = torch.stack([dst, src])
+    # next_by_uid empty (allowed)
+    hg["transaction", "next_by_uid", "transaction"].edge_index = torch.empty((2, 0), dtype=torch.int64)
+    return hg
+
+
+def test_entity_projector_per_type_independent():
+    proj = EntityProjector(entity_types=("card1", "addr1"), in_dim=5, d_graph=8)
+    w_before = proj.proj["addr1"].weight.detach().clone()
+    # Mutate card1 weight: addr1 weight must be unchanged
+    with torch.no_grad():
+        proj.proj["card1"].weight.fill_(99.0)
+    w_after = proj.proj["addr1"].weight.detach().clone()
+    assert torch.equal(w_before, w_after)
+
+
+def test_hetero_graph_tower_forward_shape():
+    hg = _tiny_hetero()
+    tower = HeteroGraphTower(
+        mixer_out_dim=12, d_graph=8, n_layers=2,
+        entity_types=("card1", "addr1", "P_emaildomain", "DeviceInfo"),
+        dropout=0.0,
+    )
+    txn_mixed = torch.randn(10, 12)
+    seed_local = torch.arange(10)
+    out = tower(hg, txn_mixed, seed_local)
+    assert out.shape == (10, 8), f"expected (10, 8) got {tuple(out.shape)}"
+
+
+def test_hetero_graph_tower_seed_extraction():
+    hg = _tiny_hetero()
+    tower = HeteroGraphTower(
+        mixer_out_dim=12, d_graph=8, n_layers=1,
+        entity_types=("card1", "addr1", "P_emaildomain", "DeviceInfo"),
+        dropout=0.0,
+    )
+    txn_mixed = torch.randn(10, 12)
+    # Pick only 3 seeds; output rows must be exactly len(seed_local) and match those positions
+    seed_local = torch.tensor([1, 4, 7])
+    full = tower(hg, txn_mixed, torch.arange(10))
+    sub = tower(hg, txn_mixed, seed_local)
+    assert sub.shape == (3, 8)
+    # Determinism: same module + same input should yield identical seed slice
+    torch.testing.assert_close(sub, full[seed_local])
