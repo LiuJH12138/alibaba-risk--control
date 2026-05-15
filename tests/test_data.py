@@ -157,3 +157,57 @@ def test_v_column_pruning_keeps_one_per_correlated_group():
     })
     kept = compute_pruned_v_cols(df, threshold=0.95)
     assert kept == ["V1", "V3", "V5"]   # 贪心顺序保留首个代表
+
+
+# ===== Stage 3a: entity stats (train-only computation, cold-start fallback) =====
+import numpy as np
+import pandas as pd
+from src.data.entity_stats import compute_entity_stats, compute_all_entity_features
+
+
+def test_entity_stats_train_only(tiny_raw_df):
+    """entity_stats must depend only on train rows; mutating val rows must not change output."""
+    df = tiny_raw_df.copy()
+    n = len(df)
+    train_idx = np.arange(0, int(n * 0.8))
+    val_idx = np.arange(int(n * 0.8), n)
+
+    stats_a = compute_entity_stats(df.iloc[train_idx], entity_col="card1",
+                                   amt_col="TransactionAmt",
+                                   dt_col="TransactionDT",
+                                   label_col="isFraud")
+    # Now scramble val labels AND val amounts: train-only stats must be unchanged
+    df.loc[val_idx, "isFraud"] = 1 - df.loc[val_idx, "isFraud"]
+    df.loc[val_idx, "TransactionAmt"] = df.loc[val_idx, "TransactionAmt"] * 1000.0
+    stats_b = compute_entity_stats(df.iloc[train_idx], entity_col="card1",
+                                   amt_col="TransactionAmt",
+                                   dt_col="TransactionDT",
+                                   label_col="isFraud")
+    pd.testing.assert_frame_equal(stats_a, stats_b)
+
+
+def test_cold_start_entity_fallback(tiny_raw_df):
+    """val/test entities not in train must be filled with train-population mean (no NaN)."""
+    df = tiny_raw_df.copy()
+    n = len(df)
+    train_idx = np.arange(0, int(n * 0.8))
+    val_idx = np.arange(int(n * 0.8), n)
+    # Inject a brand-new card1 value into val rows
+    df.loc[val_idx[0], "card1"] = 999999
+
+    feats = compute_all_entity_features(
+        df=df, train_idx=train_idx, val_idx=val_idx,
+        entity_cols=["card1", "addr1", "P_emaildomain", "DeviceInfo"],
+        amt_col="TransactionAmt", dt_col="TransactionDT", label_col="isFraud",
+    )
+    # feats is dict[entity_col] -> dict {ids: list, x: np.ndarray [n_unique+1, 5]}
+    card1_block = feats["card1"]
+    assert "_COLD_" in card1_block["ids"], "cold-start sentinel must exist"
+    assert not np.any(np.isnan(card1_block["x"])), "no NaN allowed in entity features"
+    # The 999999 entity should map to the cold-start row
+    cold_idx = card1_block["ids"].index("_COLD_")
+    cold_vec = card1_block["x"][cold_idx]
+    # cold-start vector must equal column means of train-entity vectors
+    train_only_rows = np.array([card1_block["x"][i] for i, eid in enumerate(card1_block["ids"])
+                                if eid != "_COLD_"])
+    np.testing.assert_allclose(cold_vec, train_only_rows.mean(axis=0), rtol=1e-5)
