@@ -209,3 +209,35 @@ def test_hetero_graph_tower_seed_extraction():
     assert sub.shape == (3, 8)
     # Determinism: same module + same input should yield identical seed slice
     torch.testing.assert_close(sub, full[seed_local])
+
+
+
+# ===== Stage 3a: FraudModel backbone switch =====
+
+
+def test_fraud_model_backbone_switch():
+    """Constructing FraudModel with graph_backbone='hetero' must produce a model
+    with strictly more parameters than 'homo' and identical seq/fusion submodule
+    parameter counts."""
+    cat_card = [10, 8, 5]
+    n_num = 6
+    cfg = {
+        "d_model": 16, "n_heads": 2, "n_transformer_layers": 1,
+        "d_seq": 16, "d_graph": 16, "graphsage_layers": 1,
+        "d_fuse": 16, "mlp_hidden": 8, "dropout": 0.0, "cat_emb_dim": 4,
+        "hetero_d_graph": 16, "hetero_n_layers": 1, "entity_feat_dim": 5,
+    }
+    homo = FraudModel(cat_card, n_num, cfg, fusion_mode="gated", graph_backbone="homo")
+    hetero = FraudModel(cat_card, n_num, cfg, fusion_mode="gated", graph_backbone="hetero")
+
+    n_homo = sum(p.numel() for p in homo.parameters())
+    n_hetero = sum(p.numel() for p in hetero.parameters())
+    assert n_hetero > n_homo, (n_hetero, n_homo)
+    # Seq tower params must match across backbones
+    seq_homo = sum(p.numel() for p in homo.seq_tower.parameters())
+    seq_hetero = sum(p.numel() for p in hetero.seq_tower.parameters())
+    assert seq_homo == seq_hetero
+    # Fusion params must match across backbones
+    fus_homo = sum(p.numel() for p in homo.fusion.parameters())
+    fus_hetero = sum(p.numel() for p in hetero.fusion.parameters())
+    assert fus_homo == fus_hetero
