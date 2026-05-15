@@ -70,3 +70,31 @@ def test_convergence_audit_warns_on_oscillation():
     audit = _convergence_audit(history, "test_osc")
     assert audit["total_epochs"] == 20
     assert any("震荡" in w or "oscillat" in w.lower() for w in audit["warnings"])
+
+
+def test_cosine_scheduler_shape():
+    """SequentialLR(Linear warmup -> Cosine) must hit peak at warmup, anneal to eta_min by end."""
+    import torch
+    from src.train import _build_scheduler
+    model = torch.nn.Linear(2, 1)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    train_cfg = {"warmup_steps": 10, "cosine_eta_min_ratio": 0.01}
+    total_steps = 100
+    sched = _build_scheduler(opt, train_cfg, total_steps)
+
+    lrs = []
+    for _ in range(total_steps):
+        lrs.append(opt.param_groups[0]["lr"])
+        opt.step()
+        sched.step()
+
+    # Step 0: very low (start_factor=1e-6)
+    assert lrs[0] < 1e-7, f"step 0 lr should be ~1e-9, got {lrs[0]}"
+    # Step 10 is first cosine step (peak = base_lr = 1e-3)
+    assert abs(lrs[10] - 1e-3) < 5e-5, f"step 10 lr should ~1e-3, got {lrs[10]}"
+    # Final step: ~ peak * eta_min_ratio = 1e-5
+    assert abs(lrs[-1] - 1e-5) < 5e-6, f"final lr should ~1e-5, got {lrs[-1]}"
+    # Monotone non-increase after warmup
+    post_warmup = lrs[10:]
+    diffs = [post_warmup[i+1] - post_warmup[i] for i in range(len(post_warmup) - 1)]
+    assert all(d <= 1e-9 for d in diffs), "post-warmup LR must be monotone non-increasing (cosine)"

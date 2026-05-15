@@ -16,6 +16,24 @@ def _set_seed(seed: int):
     torch.manual_seed(seed); np.random.seed(seed)
 
 
+def _build_scheduler(opt, train_cfg, total_steps: int):
+    """SequentialLR: linear warmup -> cosine annealing.
+
+    Stage 3a v2 fix: previous LambdaLR was warmup-then-constant, which kept the
+    LR pegged at peak throughout training. Cosine annealing fine-tunes during the
+    last third of training and is the modern default for transformer/GNN binary
+    classification (NeurIPS 2024 'Why Warmup the LR' + PyG hetero examples).
+    """
+    from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+    warmup = max(1, int(train_cfg["warmup_steps"]))
+    eta_min_ratio = float(train_cfg.get("cosine_eta_min_ratio", 0.01))
+    base_lr = opt.param_groups[0]["lr"]
+    cosine_steps = max(1, total_steps - warmup)
+    warmup_sched = LinearLR(opt, start_factor=1e-6, end_factor=1.0, total_iters=warmup)
+    cosine_sched = CosineAnnealingLR(opt, T_max=cosine_steps, eta_min=base_lr * eta_min_ratio)
+    return SequentialLR(opt, [warmup_sched, cosine_sched], milestones=[warmup])
+
+
 def _record_epoch_metrics(epoch: int, lr: float, train_loss: float,
                           epoch_seconds: float, eval_metrics: dict) -> dict:
     """Canonical per-epoch row written into training_history_<config>.json."""
@@ -86,15 +104,14 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
     model = FraudModel(cat_cardinalities, n_num_total, model_cfg, fusion_mode).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                             weight_decay=train_cfg["weight_decay"])
-    warmup = train_cfg["warmup_steps"]
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        opt, lambda step: min(1.0, (step + 1) / max(1, warmup)))
     loss_fn = HybridFocalLoss(train_cfg["focal_gamma_pos"], train_cfg["focal_gamma_neg"],
                               train_cfg["focal_alpha"], reduction="none")
     train_loader = make_loader(graph, seq_all, split["train_idx"],
                                train_cfg["batch_size"], train_cfg["neighbor_sample"])
     val_loader = make_loader(graph, seq_all, split["val_idx"],
                              train_cfg["batch_size"], train_cfg["neighbor_sample"], shuffle=False)
+    total_steps = train_cfg["epochs"] * len(train_loader)
+    scheduler = _build_scheduler(opt, train_cfg, total_steps)
 
     best_pr, best_metrics, patience = -1.0, None, 0
     for epoch in range(train_cfg["epochs"]):
@@ -190,6 +207,8 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
                             checkpoint_path: str | None = None,
                             history_path: str | None = None,
                             loss_overrides: dict | None = None,
+                            train_overrides: dict | None = None,    # Stage 3a v2 NEW
+                            model_overrides: dict | None = None,    # Stage 3a v2 NEW
                             config_name: str = "hetero_run") -> dict:
     """Stage 3a heterogeneous training loop with convergence guarantees.
 
@@ -200,15 +219,26 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
       - on completion calls _convergence_audit and returns its dict alongside metrics
       - loss_overrides: optional dict overriding train_cfg focal_* / label_smoothing_eps
         for this single run (used by hetero_asym_balanced / hetero_label_smoothing)
+      - train_overrides: optional dict overriding any train_cfg keys (Stage 3a v2)
+      - model_overrides: optional dict overriding any model_cfg keys (Stage 3a v2)
     """
+    # Stage 3a v2: per-run overrides (e.g., variant lr or dropout)
+    if train_overrides:
+        train_cfg = {**train_cfg, **train_overrides}
+    if model_overrides:
+        model_cfg = {**model_cfg, **model_overrides}
     _set_seed(train_cfg["seed"])
     model = FraudModel(cat_cardinalities, n_num_total, model_cfg, fusion_mode,
                        graph_backbone="hetero").to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                             weight_decay=train_cfg["weight_decay"])
-    warmup = train_cfg["warmup_steps"]
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        opt, lambda step: min(1.0, (step + 1) / max(1, warmup)))
+    train_loader = make_hetero_loader(hetero_graph, seq_all, split["train_idx"],
+                                      train_cfg["batch_size"], train_cfg["neighbor_sample"])
+    val_loader = make_hetero_loader(hetero_graph, seq_all, split["val_idx"],
+                                    train_cfg["batch_size"], train_cfg["neighbor_sample"],
+                                    shuffle=False)
+    total_steps = train_cfg["epochs"] * len(train_loader)
+    scheduler = _build_scheduler(opt, train_cfg, total_steps)
 
     # Resolve loss params (overrides win over train.yaml defaults)
     lo = loss_overrides or {}
@@ -219,12 +249,6 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
         label_smoothing_eps=lo.get("label_smoothing_eps", 0.0),
         reduction="none",
     )
-
-    train_loader = make_hetero_loader(hetero_graph, seq_all, split["train_idx"],
-                                      train_cfg["batch_size"], train_cfg["neighbor_sample"])
-    val_loader = make_hetero_loader(hetero_graph, seq_all, split["val_idx"],
-                                    train_cfg["batch_size"], train_cfg["neighbor_sample"],
-                                    shuffle=False)
 
     history: list[dict] = []
     hnm_diag_history: list[dict] = []     # only filled when use_hnm=True
@@ -310,6 +334,41 @@ STAGE3A_CONFIGS = [
      "loss_overrides": {}},
 ]
 
+STAGE3A_V2_CONFIGS = [
+    # All inherit hetero_asym_balanced base loss params + MUST FIX in train.yaml v2.
+    # Each variant changes EXACTLY ONE knob beyond the MUST FIX baseline.
+    {"name": "asym_v2_baseline",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {},
+     "model_overrides": {}},
+    {"name": "asym_v2_dropout02",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {},
+     "model_overrides": {"hetero_dropout": 0.2}},
+    {"name": "asym_v2_dropout03",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {},
+     "model_overrides": {"hetero_dropout": 0.3}},
+    {"name": "asym_v2_lr5e4",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {"lr": 5e-4},
+     "model_overrides": {}},
+    {"name": "asym_v2_alpha05",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.5},
+     "train_overrides": {},
+     "model_overrides": {}},
+    {"name": "asym_v2_alpha07",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.7},
+     "train_overrides": {},
+     "model_overrides": {}},
+]
+
 
 def run_stage3a_matrix(device="cuda", v_strategy: str = "pruned_v",
                        configs: list[dict] | None = None) -> dict:
@@ -346,7 +405,10 @@ def run_stage3a_matrix(device="cuda", v_strategy: str = "pruned_v",
             cat_cardinalities=cat_cardinalities, n_num_total=n_num_total,
             model_cfg=model_cfg, train_cfg=train_cfg, device=device,
             checkpoint_path=ckpt, history_path=history_path,
-            loss_overrides=cfg["loss_overrides"], config_name=name,
+            loss_overrides=cfg["loss_overrides"],
+            train_overrides=cfg.get("train_overrides", None),
+            model_overrides=cfg.get("model_overrides", None),
+            config_name=name,
         )
         metrics["train_seconds"] = round(time.time() - t0, 1)
         metrics["v_strategy"] = v_strategy

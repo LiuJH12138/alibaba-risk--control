@@ -37,7 +37,7 @@ class FraudModel(nn.Module):
                 mixer_out_dim=feat_dim,
                 d_graph=c["hetero_d_graph"],
                 n_layers=c["hetero_n_layers"],
-                dropout=c["dropout"],
+                dropout=c.get("hetero_dropout", c["dropout"]),
             )
             graph_out_dim = c["hetero_d_graph"]
         else:
