@@ -1,0 +1,92 @@
+[
+  {
+    "epoch": 1,
+    "n_pos": 18,
+    "n_neg": 350,
+    "n_kept_neg": 54,
+    "mean_prob_kept_neg": 0.43769165873527527,
+    "mean_prob_dropped_neg": 0.4197779595851898,
+    "max_prob_dropped_neg": 0.4257243871688843
+  },
+  {
+    "epoch": 2,
+    "n_pos": 9,
+    "n_neg": 359,
+    "n_kept_neg": 27,
+    "mean_prob_kept_neg": 0.4111497402191162,
+    "mean_prob_dropped_neg": 0.4026242196559906,
+    "max_prob_dropped_neg": 0.40641698241233826
+  },
+  {
+    "epoch": 3,
+    "n_pos": 16,
+    "n_neg": 352,
+    "n_kept_neg": 48,
+    "mean_prob_kept_neg": 0.4033936858177185,
+    "mean_prob_dropped_neg": 0.4007965326309204,
+    "max_prob_dropped_neg": 0.400863915681839
+  },
+  {
+    "epoch": 4,
+    "n_pos": 8,
+    "n_neg": 360,
+    "n_kept_neg": 24,
+    "mean_prob_kept_neg": 0.4005216956138611,
+    "mean_prob_dropped_neg": 0.39537063241004944,
+    "max_prob_dropped_neg": 0.39539921283721924
+  },
+  {
+    "epoch": 5,
+    "n_pos": 15,
+    "n_neg": 353,
+    "n_kept_neg": 45,
+    "mean_prob_kept_neg": 0.3931717872619629,
+    "mean_prob_dropped_neg": 0.39316052198410034,
+    "max_prob_dropped_neg": 0.3931630253791809
+  },
+  {
+    "epoch": 6,
+    "n_pos": 9,
+    "n_neg": 359,
+    "n_kept_neg": 27,
+    "mean_prob_kept_neg": 0.41776585578918457,
+    "mean_prob_dropped_neg": 0.39035525918006897,
+    "max_prob_dropped_neg": 0.39035525918006897
+  },
+  {
+    "epoch": 7,
+    "n_pos": 9,
+    "n_neg": 359,
+    "n_kept_neg": 27,
+    "mean_prob_kept_neg": 0.4005599915981293,
+    "mean_prob_dropped_neg": 0.39109307527542114,
+    "max_prob_dropped_neg": 0.39109373092651367
+  },
+  {
+    "epoch": 8,
+    "n_pos": 14,
+    "n_neg": 354,
+    "n_kept_neg": 42,
+    "mean_prob_kept_neg": 0.39113354682922363,
+    "mean_prob_dropped_neg": 0.39091283082962036,
+    "max_prob_dropped_neg": 0.39091283082962036
+  },
+  {
+    "epoch": 9,
+    "n_pos": 15,
+    "n_neg": 353,
+    "n_kept_neg": 45,
+    "mean_prob_kept_neg": 0.3996458351612091,
+    "mean_prob_dropped_neg": 0.39193397760391235,
+    "max_prob_dropped_neg": 0.39193400740623474
+  },
+  {
+    "epoch": 10,
+    "n_pos": 18,
+    "n_neg": 350,
+    "n_kept_neg": 54,
+    "mean_prob_kept_neg": 0.40013962984085083,
+    "mean_prob_dropped_neg": 0.3892616033554077,
+    "max_prob_dropped_neg": 0.3892616033554077
+  }
+]

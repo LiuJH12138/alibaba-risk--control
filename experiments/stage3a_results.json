@@ -89,5 +89,35 @@
         "label_smoothing_eps": 0.1
       }
     }
+  },
+  "hetero_HNM_root_cause": {
+    "roc_auc": 0.8217535556451896,
+    "pr_auc": 0.3035054757736846,
+    "ks": 0.4980542200592836,
+    "recall_at_fpr_0.01": 0.2608267716535433,
+    "fpr_at_recall_0.90": 0.5643611237767879,
+    "audit": {
+      "best_epoch": 2,
+      "total_epochs": 10,
+      "last5_pr_auc": [
+        0.2358544364712028,
+        0.2529852111940954,
+        0.21763988760069353,
+        0.25158193764040127,
+        0.2863534460747009
+      ],
+      "warnings": [
+        "\u26a0\ufe0f  \u4ec5\u8bad\u7ec3 10 epochs (<15),\u53ef\u80fd\u65e9\u505c\u8fc7\u65e9",
+        "\u26a0\ufe0f  \u672b 5 epoch val_pr_auc \u9707\u8361 > 0.02 (oscillation),\u672a\u6536\u655b"
+      ]
+    },
+    "converged": false,
+    "train_seconds": 448.8,
+    "v_strategy": "pruned_v",
+    "config": {
+      "name": "hetero_HNM_root_cause",
+      "use_hnm": true,
+      "loss_overrides": {}
+    }
   }
 }
