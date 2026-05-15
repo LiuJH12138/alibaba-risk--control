@@ -55,12 +55,12 @@ from src.deploy.benchmark import benchmark_torch
 
 def test_benchmark_torch_returns_latency_stats():
     from src.models.fraud_model import FraudModel
-    model = FraudModel(feat_dim=8, model_cfg={
+    model = FraudModel(cat_cardinalities=[5, 7], n_num_total=4, model_cfg={
         "d_model": 16, "n_heads": 2, "n_transformer_layers": 1, "d_seq": 8,
         "d_graph": 8, "graphsage_layers": 2, "d_fuse": 8, "mlp_hidden": 4,
-        "dropout": 0.0}, fusion_mode="gated").eval()
-    stats = benchmark_torch(model, feat_dim=8, seq_len=6, d_graph=8,
-                            device="cpu", n_runs=20, warmup=5)
+        "dropout": 0.0, "cat_emb_dim": 4}, fusion_mode="gated").eval()
+    stats = benchmark_torch(model, cat_cardinalities=[5, 7], n_num_total=4,
+                            seq_len=6, d_graph=8, device="cpu", n_runs=20, warmup=5)
     assert "p50_ms" in stats and "p95_ms" in stats and "p99_ms" in stats
     assert stats["p50_ms"] > 0
 
