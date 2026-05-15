@@ -17,8 +17,8 @@ NUM_COLS = (
 )
 
 class FeatureProcessor:
-    """类别字段 → 整数编码归一化到 [0,1)(除以基数);数值字段 → 标准化 + clip[-10,10] + 缺失指示位。
-    所有统计量只在 train 上 fit。"""
+    """类别字段 → 整数索引数组 [N, n_cat];数值字段 → 标准化 + clip[-10,10] + 缺失指示位 [N, n_num*2]。
+    所有统计量只在 train 上 fit。transform 返回 dict: {"cat_idx": int64 array, "num": float32 array}。"""
 
     def __init__(self, cat_cols=None, num_cols=None):
         self.cat_cols = list(cat_cols) if cat_cols is not None else list(CAT_COLS)
@@ -44,15 +44,20 @@ class FeatureProcessor:
         }
         return self
 
-    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        out = pd.DataFrame(index=df.index)
-        for c in self.cat_cols:
+    def transform(self, df: pd.DataFrame) -> dict:
+        # cat: 整数索引数组 [N, n_cat] (int64);unknown → 0
+        cat_arr = np.zeros((len(df), len(self.cat_cols)), dtype="int64")
+        for j, c in enumerate(self.cat_cols):
             m = self._cat_maps[c]
-            codes = df[c].astype(str).fillna("nan").map(m).fillna(0).astype("int64")
-            cardinality = len(m) + 1
-            out[c] = codes / cardinality          # bounded [0, 1)
-        for c in self.num_cols:
+            cat_arr[:, j] = (df[c].astype(str).fillna("nan")
+                             .map(m).fillna(0).astype("int64").to_numpy())
+        # num: 标准化 + clip 到 [-10, 10],并拼接 isna 指示位
+        n_num = len(self.num_cols)
+        num_arr = np.zeros((len(df), n_num * 2), dtype="float32")
+        for j, c in enumerate(self.num_cols):
             col = df[c].astype("float64")
-            out[c] = ((col - self._num_mean[c]) / self._num_std[c]).fillna(0.0).clip(-10.0, 10.0)
-            out[f"{c}__isna"] = col.isna().astype("float32")
-        return out
+            std_val = ((col - self._num_mean[c]) / self._num_std[c]
+                       ).fillna(0.0).clip(-10.0, 10.0).astype("float32").to_numpy()
+            num_arr[:, j] = std_val
+            num_arr[:, n_num + j] = col.isna().astype("float32").to_numpy()
+        return {"cat_idx": cat_arr, "num": num_arr}

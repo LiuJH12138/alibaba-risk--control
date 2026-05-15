@@ -7,7 +7,7 @@ from src.data.uid import synthesize_uid
 from src.data.features import FeatureProcessor
 from src.data.sequence import build_sequences
 from src.data.graph import build_edges
-
+from src.data.v_pruning import compute_pruned_v_cols
 
 from src.data.build import time_split, validate_split
 
@@ -55,20 +55,34 @@ def test_processor_fits_on_train_only():
     val = pd.DataFrame({"ProductCD": ["A", "C"], "TransactionAmt": [30.0, 40.0]})
     fp = FeatureProcessor(cat_cols=["ProductCD"], num_cols=["TransactionAmt"])
     fp.fit(train)
-    tr = fp.transform(train)
-    va = fp.transform(val)
-    # 未见类别 "C" 映射到 0(unknown 桶),不报错
-    assert va["ProductCD"].iloc[1] == 0
-    # 数值标准化用 train 统计量:train 均值处 ~0
-    assert abs(tr["TransactionAmt"].mean()) < 1e-6
+    tr = fp.transform(train); va = fp.transform(val)
+    # dict 接口
+    assert set(tr.keys()) == {"cat_idx", "num"}
+    # 未见类别 "C" 映射到 0(unknown 桶)—— cat 现在是整数索引
+    assert va["cat_idx"][1, 0] == 0
+    # 数值标准化:train 列 0(TransactionAmt)均值 ≈ 0
+    assert abs(tr["num"][:, 0].mean()) < 1e-6
 
 def test_processor_meta_has_cardinalities():
     train = pd.DataFrame({"ProductCD": ["A", "B"], "TransactionAmt": [10.0, 20.0]})
     fp = FeatureProcessor(cat_cols=["ProductCD"], num_cols=["TransactionAmt"])
     fp.fit(train)
-    # 基数 = 不同类别数 + 1(unknown 桶)
     assert fp.meta["cat_cardinalities"]["ProductCD"] == 3
     assert fp.meta["num_cols"] == ["TransactionAmt"]
+
+def test_processor_output_is_bounded():
+    rng = np.random.default_rng(0)
+    train = pd.DataFrame({
+        "card1": np.arange(500),                      # 高基数 cat
+        "TransactionAmt": rng.normal(0, 1, size=500),
+    })
+    fp = FeatureProcessor(cat_cols=["card1"], num_cols=["TransactionAmt"])
+    fp.fit(train)
+    out = fp.transform(train)
+    # cat: 整数索引,在 [0, cardinality);本例 cardinality = 501
+    assert out["cat_idx"].min() >= 0 and out["cat_idx"].max() < 501
+    # num: 标准化 + 裁剪 [-10, 10]
+    assert out["num"].min() >= -10.0 and out["num"].max() <= 10.0
 
 
 def test_sequence_window_and_mask():
@@ -128,22 +142,6 @@ def test_validate_split_rejects_leak():
     # 故意构造泄漏:train 含 dt=4,val 含 dt=1
     with pytest.raises(AssertionError):
         validate_split(dt, train_idx=np.array([0, 3]), val_idx=np.array([1, 2]))
-
-def test_processor_output_is_bounded():
-    # 高基数类别列(如 IEEE-CIS card1)的原始整数编码不能泄漏进特征矩阵
-    rng = np.random.default_rng(0)
-    train = pd.DataFrame({
-        "card1": np.arange(500),                      # 500 个不同值 → 基数 501
-        "TransactionAmt": rng.normal(0, 1, size=500),
-    })
-    fp = FeatureProcessor(cat_cols=["card1"], num_cols=["TransactionAmt"])
-    fp.fit(train)
-    out = fp.transform(train)
-    # 所有输出列必须有界 —— 不能有原始大整数编码漏出
-    assert out.abs().to_numpy().max() <= 11.0, f"unbounded feature: max abs = {out.abs().to_numpy().max()}"
-
-
-from src.data.v_pruning import compute_pruned_v_cols
 
 def test_v_column_pruning_keeps_one_per_correlated_group():
     rng = np.random.default_rng(0)
