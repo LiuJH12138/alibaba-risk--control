@@ -77,6 +77,8 @@ def compute_all_entity_features(df: pd.DataFrame,
     train-entity rows. ids[-1] == COLD_START_SENTINEL.
 
     Returns: {entity_col: {"ids": list[str], "x": np.ndarray [n+1, 5] float32}}
+
+    val_idx is accepted for caller API symmetry; cold-start mapping is performed at use site.
     """
     train_df = df.iloc[train_idx]
     out = {}
@@ -85,7 +87,7 @@ def compute_all_entity_features(df: pd.DataFrame,
                                      dt_col=dt_col, label_col=label_col)
         ids = list(stats.index)
         x = stats.to_numpy().astype("float32")
-        # Use row-by-row accumulation to match the test assertion path (float32 consistency)
+        # float64 accumulation then cast back: avoids float32 summation drift across many entities
         cold = x.mean(axis=0, dtype="float64").astype("float32")
         ids.append(COLD_START_SENTINEL)
         x = np.vstack([x, cold[None, :]])

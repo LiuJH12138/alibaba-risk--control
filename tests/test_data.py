@@ -10,6 +10,7 @@ from src.data.graph import build_edges
 from src.data.v_pruning import compute_pruned_v_cols
 
 from src.data.build import time_split, validate_split
+from src.data.entity_stats import compute_entity_stats, compute_all_entity_features
 
 def test_load_config_returns_dict():
     cfg = load_config("data")
@@ -160,9 +161,6 @@ def test_v_column_pruning_keeps_one_per_correlated_group():
 
 
 # ===== Stage 3a: entity stats (train-only computation, cold-start fallback) =====
-import numpy as np
-import pandas as pd
-from src.data.entity_stats import compute_entity_stats, compute_all_entity_features
 
 
 def test_entity_stats_train_only(tiny_raw_df):
