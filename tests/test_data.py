@@ -141,3 +141,21 @@ def test_processor_output_is_bounded():
     out = fp.transform(train)
     # 所有输出列必须有界 —— 不能有原始大整数编码漏出
     assert out.abs().to_numpy().max() <= 11.0, f"unbounded feature: max abs = {out.abs().to_numpy().max()}"
+
+
+from src.data.v_pruning import compute_pruned_v_cols
+
+def test_v_column_pruning_keeps_one_per_correlated_group():
+    rng = np.random.default_rng(0)
+    n = 200
+    base1 = rng.normal(size=n)
+    base2 = rng.normal(size=n)
+    df = pd.DataFrame({
+        "V1": base1,
+        "V2": base1 + 0.005 * rng.normal(size=n),  # |corr|≈1 with V1
+        "V3": base2,
+        "V4": base2 + 0.005 * rng.normal(size=n),  # |corr|≈1 with V3
+        "V5": rng.normal(size=n),                   # 独立
+    })
+    kept = compute_pruned_v_cols(df, threshold=0.95)
+    assert kept == ["V1", "V3", "V5"]   # 贪心顺序保留首个代表
