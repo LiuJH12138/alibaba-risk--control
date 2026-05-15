@@ -210,4 +210,4 @@ def test_cold_start_entity_fallback(tiny_raw_df):
     # cold-start vector must equal column means of train-entity vectors
     train_only_rows = np.array([card1_block["x"][i] for i, eid in enumerate(card1_block["ids"])
                                 if eid != "_COLD_"])
-    np.testing.assert_allclose(cold_vec, train_only_rows.mean(axis=0), rtol=1e-5)
+    np.testing.assert_allclose(cold_vec, train_only_rows.mean(axis=0, dtype="float64").astype("float32"), rtol=1e-5)

@@ -86,7 +86,7 @@ def compute_all_entity_features(df: pd.DataFrame,
         ids = list(stats.index)
         x = stats.to_numpy().astype("float32")
         # Use row-by-row accumulation to match the test assertion path (float32 consistency)
-        cold = np.array([x[i] for i in range(len(x))]).mean(axis=0).astype("float32")
+        cold = x.mean(axis=0, dtype="float64").astype("float32")
         ids.append(COLD_START_SENTINEL)
         x = np.vstack([x, cold[None, :]])
         out[col] = {"ids": ids, "x": x}
