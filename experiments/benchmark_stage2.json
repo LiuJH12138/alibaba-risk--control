@@ -1,0 +1,42 @@
+{
+  "deep_full": {
+    "pytorch_cpu": {
+      "p50_ms": 9.652951266616583,
+      "p95_ms": 73.98137296549976,
+      "p99_ms": 87.84443653188646,
+      "mean_ms": 24.164281881414354
+    },
+    "pytorch_gpu": {
+      "p50_ms": 2.175513654947281,
+      "p95_ms": 2.201065653935075,
+      "p99_ms": 2.2368809394538403,
+      "mean_ms": 2.185537920333445
+    },
+    "onnx_gpu": {
+      "skipped": "CUDAExecutionProvider not active (got ['CPUExecutionProvider'])"
+    },
+    "tensorrt_fp16": {
+      "skipped": "engine build failed"
+    }
+  },
+  "deep_pruned": {
+    "pytorch_cpu": {
+      "p50_ms": 9.830566123127937,
+      "p95_ms": 71.0530529730022,
+      "p99_ms": 76.0921705327928,
+      "mean_ms": 22.789501594379544
+    },
+    "pytorch_gpu": {
+      "p50_ms": 2.1985387429594994,
+      "p95_ms": 2.2214725613594055,
+      "p99_ms": 2.2797738108783956,
+      "mean_ms": 2.20370314642787
+    },
+    "onnx_gpu": {
+      "skipped": "CUDAExecutionProvider not active (got ['CPUExecutionProvider'])"
+    },
+    "tensorrt_fp16": {
+      "skipped": "engine build failed"
+    }
+  }
+}

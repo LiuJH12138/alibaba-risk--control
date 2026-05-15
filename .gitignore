@@ -6,3 +6,4 @@ __pycache__/
 *.engine
 *.onnx
 experiments/*.png
+!artifacts/online_*.onnx
