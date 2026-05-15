@@ -1,13 +1,15 @@
 batch_size: 1024
 lr: 0.001
 weight_decay: 0.00001
-epochs: 20
-warmup_steps: 500
+epochs: 40                  # Stage 3a: was 20, raised for convergence guarantee
+warmup_steps: 500           # Stage 3a: kept 500 (was already 500)
 grad_clip: 1.0
 seed: 42
-neighbor_sample: [15, 10]   # 两层 GraphSAGE 每层采样邻居数
+neighbor_sample: [15, 10]
 focal_gamma_pos: 1.0
-focal_gamma_neg: 4.0        # 非对称:负样本压更狠
+focal_gamma_neg: 4.0
 focal_alpha: 0.25
-hnm_neg_pos_ratio: 3.0      # 难负:正
-early_stop_patience: 4
+hnm_neg_pos_ratio: 3.0
+early_stop_patience: 8      # Stage 3a: was 4, raised to tolerate val PR-AUC oscillation
+min_epochs: 10              # Stage 3a NEW: hard floor before any early-stop allowed
+label_smoothing_eps: 0.1    # Stage 3a NEW: only used by hetero_label_smoothing config

@@ -1,9 +1,10 @@
 raw_dir: data/raw
 processed_dir: data/processed
 seq_len: 32
-split_ratio: 0.8            # 前 80% 时间作 train
+split_ratio: 0.8
 graph_entity_cols: [card1, addr1, P_emaildomain, DeviceInfo]
-graph_max_degree: 50        # 每节点入边度数封顶
-graph_max_neighbors_per_entity: 20  # 同实体内连边采样上限
+graph_max_degree: 50
+graph_max_neighbors_per_entity: 20
 expected_fraud_rate: 0.035
 fraud_rate_tol: 0.01
+build_hetero_graph: true    # Stage 3a NEW: when true, build_all() also produces hetero_graph.pt
