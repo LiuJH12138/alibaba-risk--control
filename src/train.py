@@ -43,13 +43,13 @@ def _convergence_audit(history: list[dict], config_name: str) -> dict:
 
     warnings: list[str] = []
     if best_epoch == history[-1]["epoch"]:
-        warnings.append("best_epoch == last epoch: model may still be improving")
+        warnings.append("⚠️  best_epoch == 末尾 epoch:模型可能仍在提升,需扩大 epochs 重训")
     if total_epochs < 15:
-        warnings.append(f"only {total_epochs} epochs trained (<15), possible premature early-stop")
+        warnings.append(f"⚠️  仅训练 {total_epochs} epochs (<15),可能早停过早")
     if len(last5) >= 5 and (max(last5) - min(last5)) > 0.02:
-        warnings.append(f"last-5-epoch val_pr_auc oscillation > 0.02, not converged")
+        warnings.append(f"⚠️  末 5 epoch val_pr_auc 震荡 > 0.02 (oscillation),未收敛")
 
-    print(f"[CONVERGENCE AUDIT . {config_name}]")
+    print(f"[CONVERGENCE AUDIT · {config_name}]")
     print(f"  best_epoch = {best_epoch} / total_epochs_run = {total_epochs}")
     print(f"  last 5 epochs val_pr_auc: {last5}")
     for w in warnings:
@@ -81,7 +81,7 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
                      cat_cardinalities, n_num_total,
                      model_cfg, train_cfg, device="cuda",
                      checkpoint_path: str | None = None):
-    """Train single config. Returns best metrics. Optionally saves best checkpoint."""
+    """训练单配置。返回 best 指标。可选保存 best checkpoint 到 checkpoint_path。"""
     _set_seed(train_cfg["seed"])
     model = FraudModel(cat_cardinalities, n_num_total, model_cfg, fusion_mode).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
@@ -128,13 +128,13 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
     return best_metrics
 
 
-# Stage 2 matrix: gated_fusion x {full_v, pruned_v}
+# Stage 2 矩阵:gated_fusion × {full_v, pruned_v}
 STAGE2_DEEP_CONFIGS = [{"name": "deep_full", "v_strategy": "full_v"},
                        {"name": "deep_pruned", "v_strategy": "pruned_v"}]
 
 
 def run_stage2_matrix(device="cuda"):
-    """Run Stage 2 deep model matrix (2 runs), write experiments/stage2_results.json."""
+    """跑 Stage 2 深度模型矩阵(2 跑),写 experiments/stage2_results.json。"""
     model_cfg = load_config("model")
     train_cfg = load_config("train")
     Path("experiments").mkdir(exist_ok=True)
