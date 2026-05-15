@@ -101,11 +101,36 @@ def build_all(v_strategy: str = "full_v"):
         f"fraud rate {fr} off expected"
     assert graph.edge_index.shape[1] == 0 or (dt[src] <= dt[dst]).all(), \
         "graph has non-time-respecting edges"
+    # --- Stage 3a: optionally also build heterogeneous graph alongside the homo one ---
+    if cfg.get("build_hetero_graph", False):
+        # uid was already synthesized at the top of this function
+        hg = build_hetero_graph(
+            df=df, train_idx=train_idx, val_idx=val_idx,
+            txn_cat_x=cat_x, txn_num_x=num_x,
+            entity_cols=cfg["graph_entity_cols"],
+        )
+        torch.save(hg, out / "hetero_graph.pt")
+        # Also dump entity stats JSON (for traceability) and entity feature matrices (for inspection)
+        entity_feats = compute_all_entity_features(
+            df=df, train_idx=train_idx, val_idx=val_idx,
+            entity_cols=cfg["graph_entity_cols"],
+        )
+        with open(out / "entity_stats.json", "w") as f:
+            json.dump({col: {"n_ids": len(b["ids"]), "feat_shape": list(b["x"].shape)}
+                       for col, b in entity_feats.items()}, f, indent=2)
+        for col, block in entity_feats.items():
+            torch.save({"ids": block["ids"], "x": torch.from_numpy(block["x"])},
+                       out / f"entity_features_{col}.pt")
+        n_hetero_edges = sum(int(hg[et].edge_index.shape[1]) for et in hg.edge_types)
+    else:
+        n_hetero_edges = 0
+
     manifest = {
         "v_strategy": v_strategy,
         "n_transactions": int(len(df)), "fraud_rate": fr,
         "n_train": int(len(train_idx)), "n_val": int(len(val_idx)),
         "n_edges": int(graph.edge_index.shape[1]),
+        "n_hetero_edges": n_hetero_edges,
         "n_cat": int(cat_x.shape[1]),
         "n_num_total": int(num_x.shape[1]),
         "seq_len": cfg["seq_len"],
