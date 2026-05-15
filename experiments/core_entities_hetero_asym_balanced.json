@@ -1,0 +1,411 @@
+{
+  "config": "hetero_asym_balanced",
+  "checkpoint": "artifacts/best_hetero_asym_balanced.pt",
+  "prob_threshold": 0.9,
+  "n_high_prob_fraud_seeds": 1121,
+  "rings_per_type": {
+    "card1": [
+      {
+        "node_idx": 12460,
+        "pagerank": 0.003976396801406275,
+        "degree": 84
+      },
+      {
+        "node_idx": 12032,
+        "pagerank": 0.0039474085532542474,
+        "degree": 82
+      },
+      {
+        "node_idx": 475,
+        "pagerank": 0.0036129880114029347,
+        "degree": 76
+      },
+      {
+        "node_idx": 9658,
+        "pagerank": 0.003175740106081663,
+        "degree": 66
+      },
+      {
+        "node_idx": 4954,
+        "pagerank": 0.002679916965687143,
+        "degree": 56
+      },
+      {
+        "node_idx": 7342,
+        "pagerank": 0.002316077654897428,
+        "degree": 46
+      },
+      {
+        "node_idx": 3475,
+        "pagerank": 0.002233331616166006,
+        "degree": 44
+      },
+      {
+        "node_idx": 6884,
+        "pagerank": 0.002222453942888742,
+        "degree": 46
+      },
+      {
+        "node_idx": 7735,
+        "pagerank": 0.0021761293386102047,
+        "degree": 44
+      },
+      {
+        "node_idx": 8097,
+        "pagerank": 0.001892557455035438,
+        "degree": 38
+      },
+      {
+        "node_idx": 721,
+        "pagerank": 0.0017632772249325996,
+        "degree": 36
+      },
+      {
+        "node_idx": 3118,
+        "pagerank": 0.001728466636774657,
+        "degree": 34
+      },
+      {
+        "node_idx": 2951,
+        "pagerank": 0.001672759387714914,
+        "degree": 34
+      },
+      {
+        "node_idx": 2870,
+        "pagerank": 0.0016232866611966181,
+        "degree": 32
+      },
+      {
+        "node_idx": 7081,
+        "pagerank": 0.0016129593023404213,
+        "degree": 32
+      },
+      {
+        "node_idx": 11012,
+        "pagerank": 0.001594543881206579,
+        "degree": 32
+      },
+      {
+        "node_idx": 11818,
+        "pagerank": 0.0015771926506475947,
+        "degree": 32
+      },
+      {
+        "node_idx": 3243,
+        "pagerank": 0.0015712997173141243,
+        "degree": 32
+      },
+      {
+        "node_idx": 3594,
+        "pagerank": 0.00150356064157776,
+        "degree": 30
+      },
+      {
+        "node_idx": 7313,
+        "pagerank": 0.0014913759909550657,
+        "degree": 30
+      }
+    ],
+    "addr1": [
+      {
+        "node_idx": 328,
+        "pagerank": 0.05803664963338846,
+        "degree": 1200
+      },
+      {
+        "node_idx": 176,
+        "pagerank": 0.005052162099498742,
+        "degree": 100
+      },
+      {
+        "node_idx": 78,
+        "pagerank": 0.004717755067491019,
+        "degree": 94
+      },
+      {
+        "node_idx": 171,
+        "pagerank": 0.004232307707987875,
+        "degree": 82
+      },
+      {
+        "node_idx": 253,
+        "pagerank": 0.004230763791081036,
+        "degree": 88
+      },
+      {
+        "node_idx": 126,
+        "pagerank": 0.004046995241173563,
+        "degree": 82
+      },
+      {
+        "node_idx": 130,
+        "pagerank": 0.0030012732493911692,
+        "degree": 58
+      },
+      {
+        "node_idx": 149,
+        "pagerank": 0.002801273390058397,
+        "degree": 54
+      },
+      {
+        "node_idx": 14,
+        "pagerank": 0.0022317197201636037,
+        "degree": 42
+      },
+      {
+        "node_idx": 164,
+        "pagerank": 0.002133928261153958,
+        "degree": 42
+      },
+      {
+        "node_idx": 128,
+        "pagerank": 0.001967960492043158,
+        "degree": 40
+      },
+      {
+        "node_idx": 295,
+        "pagerank": 0.001876976519634555,
+        "degree": 38
+      },
+      {
+        "node_idx": 307,
+        "pagerank": 0.0018048690440196616,
+        "degree": 34
+      },
+      {
+        "node_idx": 277,
+        "pagerank": 0.001627197324836471,
+        "degree": 32
+      },
+      {
+        "node_idx": 181,
+        "pagerank": 0.0013647123661938154,
+        "degree": 26
+      },
+      {
+        "node_idx": 17,
+        "pagerank": 0.001261879754584243,
+        "degree": 22
+      },
+      {
+        "node_idx": 279,
+        "pagerank": 0.001176401230365728,
+        "degree": 22
+      },
+      {
+        "node_idx": 59,
+        "pagerank": 0.001160347493162093,
+        "degree": 18
+      },
+      {
+        "node_idx": 67,
+        "pagerank": 0.0010720297522440008,
+        "degree": 20
+      },
+      {
+        "node_idx": 96,
+        "pagerank": 0.0007154240906724095,
+        "degree": 10
+      }
+    ],
+    "P_emaildomain": [
+      {
+        "node_idx": 17,
+        "pagerank": 0.05713821974622054,
+        "degree": 1164
+      },
+      {
+        "node_idx": 0,
+        "pagerank": 0.014059309486829166,
+        "degree": 280
+      },
+      {
+        "node_idx": 20,
+        "pagerank": 0.012800604017121865,
+        "degree": 262
+      },
+      {
+        "node_idx": 54,
+        "pagerank": 0.01081320659408864,
+        "degree": 222
+      },
+      {
+        "node_idx": 36,
+        "pagerank": 0.004644916731240895,
+        "degree": 94
+      },
+      {
+        "node_idx": 10,
+        "pagerank": 0.0034241918357852787,
+        "degree": 70
+      },
+      {
+        "node_idx": 3,
+        "pagerank": 0.002596579928861641,
+        "degree": 52
+      },
+      {
+        "node_idx": 2,
+        "pagerank": 0.0018740169644128409,
+        "degree": 30
+      },
+      {
+        "node_idx": 35,
+        "pagerank": 0.0008767959343719876,
+        "degree": 16
+      },
+      {
+        "node_idx": 32,
+        "pagerank": 0.0007606357359891267,
+        "degree": 12
+      },
+      {
+        "node_idx": 59,
+        "pagerank": 0.0006290785046685517,
+        "degree": 8
+      },
+      {
+        "node_idx": 24,
+        "pagerank": 0.00046356056399858515,
+        "degree": 6
+      },
+      {
+        "node_idx": 30,
+        "pagerank": 0.00044338678846783246,
+        "degree": 6
+      },
+      {
+        "node_idx": 37,
+        "pagerank": 0.0004083312283537984,
+        "degree": 6
+      },
+      {
+        "node_idx": 26,
+        "pagerank": 0.00039860765176048086,
+        "degree": 4
+      },
+      {
+        "node_idx": 13,
+        "pagerank": 0.0003237031434841305,
+        "degree": 4
+      },
+      {
+        "node_idx": 9,
+        "pagerank": 0.00025813133661794406,
+        "degree": 2
+      },
+      {
+        "node_idx": 5,
+        "pagerank": 0.0002285575626514435,
+        "degree": 2
+      },
+      {
+        "node_idx": 27,
+        "pagerank": 0.0002133872937949807,
+        "degree": 2
+      }
+    ],
+    "DeviceInfo": [
+      {
+        "node_idx": 1578,
+        "pagerank": 0.0562076529289329,
+        "degree": 1156
+      },
+      {
+        "node_idx": 1467,
+        "pagerank": 0.022414658554612676,
+        "degree": 460
+      },
+      {
+        "node_idx": 1586,
+        "pagerank": 0.002099848371711363,
+        "degree": 36
+      },
+      {
+        "node_idx": 661,
+        "pagerank": 0.0020284083324811518,
+        "degree": 36
+      },
+      {
+        "node_idx": 733,
+        "pagerank": 0.0019253332113225298,
+        "degree": 38
+      },
+      {
+        "node_idx": 1137,
+        "pagerank": 0.001837310746640244,
+        "degree": 36
+      },
+      {
+        "node_idx": 1628,
+        "pagerank": 0.0017688807929513817,
+        "degree": 36
+      },
+      {
+        "node_idx": 641,
+        "pagerank": 0.001443847341386317,
+        "degree": 28
+      },
+      {
+        "node_idx": 1629,
+        "pagerank": 0.0012062601119903935,
+        "degree": 22
+      },
+      {
+        "node_idx": 824,
+        "pagerank": 0.0010603135679045853,
+        "degree": 20
+      },
+      {
+        "node_idx": 1528,
+        "pagerank": 0.0009266150005638488,
+        "degree": 16
+      },
+      {
+        "node_idx": 815,
+        "pagerank": 0.0008709739841665313,
+        "degree": 16
+      },
+      {
+        "node_idx": 181,
+        "pagerank": 0.0008580929925259084,
+        "degree": 16
+      },
+      {
+        "node_idx": 545,
+        "pagerank": 0.0008413666908948567,
+        "degree": 16
+      },
+      {
+        "node_idx": 619,
+        "pagerank": 0.0008413666908948567,
+        "degree": 16
+      },
+      {
+        "node_idx": 1550,
+        "pagerank": 0.0007749755160463442,
+        "degree": 14
+      },
+      {
+        "node_idx": 1219,
+        "pagerank": 0.0007516257606214294,
+        "degree": 14
+      },
+      {
+        "node_idx": 691,
+        "pagerank": 0.000708399229469822,
+        "degree": 12
+      },
+      {
+        "node_idx": 1640,
+        "pagerank": 0.0007045439625499521,
+        "degree": 12
+      },
+      {
+        "node_idx": 1469,
+        "pagerank": 0.00066418288006265,
+        "degree": 12
+      }
+    ]
+  }
+}
