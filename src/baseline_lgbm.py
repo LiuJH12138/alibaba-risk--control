@@ -1,4 +1,5 @@
 import json
+import pickle
 from pathlib import Path
 import numpy as np
 import lightgbm as lgb
@@ -26,7 +27,7 @@ def train_lgbm_baseline(x_train, y_train, x_val, y_val, categorical_feature=None
         subsample=0.8, colsample_bytree=0.8, random_state=42,
         class_weight="balanced",
     )
-    fit_kwargs = {"categorical_feature": categorical_feature} if categorical_feature else {}
+    fit_kwargs = {"categorical_feature": categorical_feature} if categorical_feature is not None else {}
     clf.fit(x_train, y_train, **fit_kwargs)
     scores = clf.predict_proba(x_val)[:, 1]
     return compute_metrics(y_val, scores), clf
@@ -60,7 +61,6 @@ def run_baseline(v_strategy: str):
 
     # 存模型 + 尝试 PMML(失败不致命)
     Path("artifacts").mkdir(exist_ok=True)
-    import pickle
     with open(f"artifacts/best_lgbm_{v_strategy.replace('_v', '')}.pkl", "wb") as f:
         pickle.dump(clf, f)
     try:
