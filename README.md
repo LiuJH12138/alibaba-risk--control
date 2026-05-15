@@ -128,8 +128,48 @@ pytest -v
 
 ## 阶段
 
-- **Stage 1**(本仓库当前)— 一体化端到端 MVP ✅
-- Stage 2 — 异质图深化、团伙核心节点识别、proper categorical embeddings、深化损失实验
-- Stage 3 — 生产化可部署系统(Triton 服务、INT8、算子优化、完整 PMML/TensorRT 部署)
+- **Stage 1**(已完成)— 一体化端到端 MVP ✅
+- **Stage 2**(已完成)— 模型基础升级:per-field 类别 embedding + 完整 V 列 ✅
+- Stage 3 — 异质图深化、团伙核心节点识别、生产化部署、损失深化、PMML/cuDNN 工具链
 
 设计演进与执行中发现的问题见 `docs/DESIGN_JOURNAL.md`,完整设计见 `docs/superpowers/specs/`。
+
+## Stage 2 结果(2026-05-15)
+
+**新命令(在 Stage 1 命令基础上更新):**
+```bash
+python -m src.data.build              # 双轨数据(full_v + pruned_v)
+python -m src.train                   # gated_fusion × 2 v_strategy(写 stage2_results.json)
+python -m src.baseline_lgbm           # LGB × 2 v_strategy(append 到 stage2_results.json)
+python -m src.deploy.benchmark        # 双模型延迟(写 benchmark_stage2.json)
+```
+
+**架构 + V 策略消融**(IEEE-CIS 公开数据)
+
+| 配置 | roc_auc | pr_auc | ks | recall@fpr=.01 | fpr@recall=.90 |
+|---|---|---|---|---|---|
+| deep_full | 0.8621 | 0.4370 | 0.5731 | 0.3632 | 0.4526 |
+| deep_pruned | **0.8639** | 0.4312 | 0.5637 | 0.3713 | 0.4584 |
+| **lgbm_full** | **0.9016** | **0.5556** | **0.6475** | **0.4941** | **0.3432** |
+| lgbm_pruned | 0.8980 | 0.5303 | 0.6416 | 0.4678 | 0.3651 |
+
+**延迟 benchmark**(单笔 batch=1)
+
+| 模型 | pytorch_cpu p50 | pytorch_gpu p50 | onnx_gpu | tensorrt_fp16 |
+|---|---|---|---|---|
+| deep_full | 9.65 ms | 2.18 ms (~4.4×) | skipped (cuDNN ABI) | skipped (engine build failed) |
+| deep_pruned | 9.83 ms | 2.20 ms (~4.5×) | skipped (cuDNN ABI) | skipped (engine build failed) |
+
+**结果解读(命中情景 4:Both deep < LGB)**
+
+- 深度模型 vs Stage 1:**+0.023 roc_auc**(0.841→0.864)—— embedding + 完整 V 列
+  **确实带来增益**,验证了 v1 对根因的判断
+- 深度 vs LGB 差距:Stage 1 -0.067,Stage 2 -0.038 —— **差距收窄了一半,但
+  深度仍输给 LGB ~0.04 roc_auc**
+- V 列剪枝(130 列保留)对深度模型几乎无影响(deep_pruned 0.864 ≈ deep_full 0.862),
+  但 LGB 上 full_v 略优 0.004
+- **诚实结论**:在 IEEE-CIS 这类中等规模、构造图、表格特征为主的设置下,
+  GBDT 的归纳偏置确实强于此类深度双塔架构。Stage 3 的异质图 + 团伙特征 +
+  外部信号是让深度模型有机会跑赢 LGB 的方向
+
+设计决策、实施 bug、完整诚实分析见 `docs/DESIGN_JOURNAL.md` v2 节。

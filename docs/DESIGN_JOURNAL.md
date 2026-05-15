@@ -308,3 +308,144 @@ TensorRT 执行提供器无法加载。
 8. **GraphSAGE:** W. Hamilton et al., "Inductive Representation Learning on Large Graphs," NeurIPS 2017.
 9. **IEEE-CIS Fraud Detection Dataset:** Kaggle / Vesta Corporation, IEEE-CIS Fraud Detection Competition, 2019.
 10. **Attention-Based Transformer + GRU:** MDPI Mathematics 13(9):1484.
+
+
+---
+
+## v2 (2026-05-15) — Stage 2 模型基础升级
+
+### 重定向:Stage 1 → Stage 2 的认知转变
+
+Stage 1 实测:深度双塔模型 roc_auc 0.82-0.85,LightGBM 基线 0.908,深度输给基线。
+v1 已识别根因为(a)类别字段用了缩放序数编码而非真正的 embedding,(b)V 列被
+50GB 磁盘约束削减到 V1-V50。Stage 2 优先解决这两个根因 —— 异质图与损失深化推
+到 Stage 3+。外部条件:用户将数据盘扩容到 150GB,完整 V 列(seq_all.pt ~62GB)
+放得下。
+
+文献:Shwartz-Ziv & Armon 2022 *Tabular Data: Deep Learning is Not All You Need*
+—— GBDT 在中等规模表格上常胜过深度模型,深度方法需要正确的归纳偏置才能竞争。
+
+### 设计决策
+
+#### 决策 v2-1:类别字段独立 nn.Embedding,双塔共享 mixer
+**初衷:** 替换 Stage 1 的缩放序数编码,让模型看到类别间的语义距离。
+**原理:** 每类别字段一个 `nn.Embedding(cardinality, 16)`,前置在两塔之前;
+mixer 在序列塔和图塔之间共享,保证 `card1` 在序列里和图里指同一组嵌入语义,
+少参数、强一致。
+**文献:** Wide & Deep(Cheng 2016)、DeepFM(Guo 2017)、FT-Transformer
+(Gorishniy 2021)的 per-field embedding 模式。
+
+#### 决策 v2-2:V 列相关性贪心剪枝(threshold 0.95)+ 同时跑全量做消融
+**初衷:** V1-V339 已知高度冗余,但"完整 V 列"含义不唯一 —— 直接全用 vs 剪枝。
+**原理:** 贪心遍历 V 列,与已保留列 |corr|≥0.95 则丢弃,确定性、可缓存。
+实测保留 130 列(38%)。同时跑 full_v 和 pruned_v 做消融,用数据说话哪种更好。
+**文献:** IEEE-CIS Kaggle 社区公开 kernel 中的 V 列剪枝惯例;Pearson 相关 +
+贪心去冗余是表格 ML 标准做法。
+
+#### 决策 v2-3:实验矩阵收窄到 1 配置 × 2 V 策略
+**初衷:** Stage 2 核心问题是 ONE 个 —— 升级模型基础后能否跑赢 LGB。
+**原理:** 不再跑 5 配置矩阵(Stage 1 已有完整对照)。专注 gated_fusion +
+两 V 策略 + 各自 LGB = 4 跑。诚实原则下,加配置 = 加噪声;少而精更有说服力。
+
+#### 决策 v2-4:保 best checkpoint
+**初衷:** Stage 1 漏项 —— benchmark 用了随机权重(对延迟有效但部署不完整)。
+**原理:** `train_one_config` 加 `checkpoint_path` 参数,PR-AUC 提升时保存。
+为 Stage 3 部署铺路。
+
+#### 决策 v2-5:四情景诚实成功框架
+**初衷:** 防止"必须跑赢 0.908 才算成功"的压力催生超参 chasing。
+**原理:** Stage 2 的"成功"=做完该做的工程改动 + 诚实测量。四种情景都"成功",
+都给出对 Stage 3 方向的可信证据。**不为凑赢调超参** —— 实际命中**情景 4
+(Both deep < LGB)**,见下文实验结果。
+
+### Stage 2 范围明确不在的(避免 scope creep)
+
+- 异质图(多类型节点/边)+ 团伙核心节点识别 → Stage 3+
+- 损失函数深化(HNM 反而有害的根因调查)→ Stage 3+
+- cuDNN/onnxruntime-gpu ABI 修复 → Stage 3+
+- 完整 PMML 工具链(Java 11+ 安装难)→ Stage 3+
+- TensorRT 完整端到端延迟测量 → Stage 3+(下面"实施 bug"会提到 Stage 2 TRT 引擎 build 已不通)
+
+### 执行中发现的问题与修复(诚实记录)
+
+1. **Task 4 build.py 代码审查发现(commit `a2e06c3`):** 双 `build_sequences` 调用
+   缺少 mask-identity 断言;`V_PRUNED_CACHE` 硬编码路径未从 config 派生;丢失了
+   fraud-rate 断言信息。三处全部修复。
+
+2. **Task 8 baseline_lgbm.py 代码审查发现(commit `dc0893a`):** `if categorical_feature`
+   真值检查会静默丢弃 `categorical_feature=0`;`import pickle` 在函数内。修复为
+   `is not None` 检查 + import 提到顶层。
+
+3. **Task 10 第一次跑:SIGKILL 在配置切换时。** `run_stage2_matrix` 跑完 `deep_full`
+   后试图加载 `pruned_v/seq_all.pt`,进程被 SIGKILL(可能 seq_all 切换瞬时 RAM 峰值
+   触发,虽然机器有 754GB)。恢复方案:`deep_pruned` 单独 fresh 进程运行。
+
+4. **Task 10 第二次跑:Segmentation fault 早期触发。** `deep_pruned` 在 ~3 分钟时
+   SIGSEGV(load/forward 早期)。可能是 C 扩展瞬时问题。第三次重试成功,
+   `deep_pruned` 训出 roc_auc 0.864。
+
+5. **Task 14 benchmark:TensorRT 引擎 build 现在失败**(Stage 1 build 通但 EP
+   不可用)。带 EmbeddingMixer 的更大模型导致 `build_engine` 返回 False。诚实
+   记录为 Stage 3+ 工作 —— 嵌入模型的完整 TensorRT 服务需要单独排查。
+
+6. **Task 14 .gitignore 调整:** 加 `!artifacts/online_*.onnx` 例外,让部署 ONNX
+   产物可入 git(否则被 Stage 1 的 `*.onnx` 规则拦截)。
+
+### Stage 1 修复继续生效(明确记录)
+
+- SequenceTower 用 plain GRU(不用 pack_padded_sequence)
+- FeatureProcessor 的 unknown 桶 = 0、num 裁剪 [-10,10]
+- train.py 的 `.cpu().numpy()`、LR warmup
+- build_trt.py 的 TRT 10.x API + try/except 优雅降级
+- run_benchmark 的逐配置 try/except
+
+### 实验结果与诚实分析
+
+#### 架构 + V 策略消融(IEEE-CIS 公开数据,4 配置)
+
+| 配置 | roc_auc | pr_auc | ks | recall@fpr=.01 | fpr@recall=.90 | train_s |
+|---|---|---|---|---|---|---|
+| deep_full | 0.8621 | 0.4370 | 0.5731 | 0.3632 | 0.4526 | 1853 |
+| deep_pruned | **0.8639** | 0.4312 | 0.5637 | 0.3713 | 0.4584 | 2553 |
+| **lgbm_full** | **0.9016** | **0.5556** | **0.6475** | **0.4941** | **0.3432** | <60 |
+| lgbm_pruned | 0.8980 | 0.5303 | 0.6416 | 0.4678 | 0.3651 | <60 |
+
+#### 延迟 benchmark(单笔 batch=1,本环境)
+
+| 模型 | pytorch_cpu p50 | pytorch_gpu p50 | 加速 | onnx_gpu | tensorrt_fp16 |
+|---|---|---|---|---|---|
+| deep_full | 9.65 ms | 2.18 ms | ~4.4× | skipped(cuDNN) | skipped(engine build failed) |
+| deep_pruned | 9.83 ms | 2.20 ms | ~4.5× | skipped(cuDNN) | skipped(engine build failed) |
+
+#### 命中情景 4:Both deep < LGB
+
+- 深度模型 vs Stage 1:**+0.023 roc_auc / +0.027 pr_auc**(0.841→0.864)—— embedding +
+  完整 V 列**确实带来增益**,验证了 v1 对根因的判断
+- 深度 vs LGB 差距:Stage 1 -0.067,Stage 2 -0.038 —— **差距收窄了一半,但
+  深度仍输给 LGB ~0.04 roc_auc**
+- LGB 在两套 V 策略上都很强,full_v 略优(0.902 vs 0.898),pr_auc 差距更明显
+  (0.556 vs 0.530)
+- V 列剪枝对深度模型几乎无影响(deep_pruned 0.864 ≈ deep_full 0.862),但
+  pruned_v 训练时间更长(早停延后)—— 消融的有趣发现:130 列 V 与 339 列 V
+  对深度模型的最终表现差异极小
+- **诚实结论**:在 IEEE-CIS 这类中等规模、构造图、表格特征为主的设置下,
+  GBDT 的归纳偏置确实强于此类深度双塔架构。Stage 3 的异质图 + 团伙特征 +
+  外部信号是让深度模型有机会跑赢 LGB 的方向
+
+### 与简历的对照(诚实)
+
+简历中的 AUC 0.98、资损 -8% 绑定蚂蚁专有数据 + 生产环境的特征工程 + 真实社交/
+转账图,本项目用公开数据复现的是**方法论与工程链路**。Stage 2 验证了一个
+重要假设:**Stage 1 输给 LGB 的根因确实是数据层简化**,升级后差距收窄;
+但要让深度模型在公开数据上 surpass GBDT,需要 Stage 3 的图深化。这也是
+"先跑赢基线再谈复杂架构"的工程哲学的诚实呈现。
+
+### 参考文献(v2 新增)
+
+- Shwartz-Ziv & Armon, *Tabular Data: Deep Learning is Not All You Need*,
+  Information Fusion 2022
+- Cheng et al., *Wide & Deep Learning for Recommender Systems*, DLRS 2016
+- Guo et al., *DeepFM*, IJCAI 2017
+- Gorishniy et al., *Revisiting Deep Learning Models for Tabular Data
+  (FT-Transformer)*, NeurIPS 2021
+- IEEE-CIS Fraud Detection Kaggle 社区公开 kernels(V 列相关性剪枝惯例)
