@@ -15,6 +15,53 @@ def _set_seed(seed: int):
     torch.manual_seed(seed); np.random.seed(seed)
 
 
+def _record_epoch_metrics(epoch: int, lr: float, train_loss: float,
+                          epoch_seconds: float, eval_metrics: dict) -> dict:
+    """Canonical per-epoch row written into training_history_<config>.json."""
+    return {
+        "epoch": epoch,
+        "lr": lr,
+        "train_loss": train_loss,
+        "epoch_seconds": epoch_seconds,
+        "val_roc_auc": eval_metrics["roc_auc"],
+        "val_pr_auc": eval_metrics["pr_auc"],
+        "val_ks": eval_metrics["ks"],
+        "val_recall_at_fpr_0.01": eval_metrics["recall_at_fpr_0.01"],
+    }
+
+
+def _convergence_audit(history: list[dict], config_name: str) -> dict:
+    """Inspect a training_history list and emit warnings when the run did not
+    cleanly converge. Returns a dict suitable for stage3a_results.json:
+        best_epoch, total_epochs, last5_pr_auc (list[float]), warnings (list[str])
+    Always prints a banner so the warnings appear in run logs."""
+    best = max(history, key=lambda h: h["val_pr_auc"])
+    best_epoch = best["epoch"]
+    total_epochs = len(history)
+    last5 = [h["val_pr_auc"] for h in history[-5:]]
+
+    warnings: list[str] = []
+    if best_epoch == history[-1]["epoch"]:
+        warnings.append("⚠️  best_epoch == 末尾 epoch:模型可能仍在提升,需扩大 epochs 重训")
+    if total_epochs < 15:
+        warnings.append(f"⚠️  仅训练 {total_epochs} epochs (<15),可能早停过早")
+    if len(last5) >= 5 and (max(last5) - min(last5)) > 0.02:
+        warnings.append(f"⚠️  末 5 epoch val_pr_auc 震荡 > 0.02 (oscillation),未收敛")
+
+    print(f"[CONVERGENCE AUDIT · {config_name}]")
+    print(f"  best_epoch = {best_epoch} / total_epochs_run = {total_epochs}")
+    print(f"  last 5 epochs val_pr_auc: {last5}")
+    for w in warnings:
+        print(f"  {w}")
+
+    return {
+        "best_epoch": best_epoch,
+        "total_epochs": total_epochs,
+        "last5_pr_auc": last5,
+        "warnings": warnings,
+    }
+
+
 @torch.no_grad()
 def _evaluate(model, loader, device) -> dict:
     model.eval()
