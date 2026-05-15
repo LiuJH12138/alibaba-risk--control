@@ -157,8 +157,8 @@ python -m src.deploy.benchmark        # 双模型延迟(写 benchmark_stage2.jso
 
 | 模型 | pytorch_cpu p50 | pytorch_gpu p50 | onnx_gpu | tensorrt_fp16 |
 |---|---|---|---|---|
-| deep_full | 9.65 ms | 2.18 ms (~4.4×) | skipped (cuDNN ABI) | skipped (engine build failed) |
-| deep_pruned | 9.83 ms | 2.20 ms (~4.5×) | skipped (cuDNN ABI) | skipped (engine build failed) |
+| deep_full | 9.65 ms | 2.18 ms (~4.4×) | skipped (cuDNN ABI) | skipped (TRT EP 不可用; 引擎构建成功) |
+| deep_pruned | 9.83 ms | 2.20 ms (~4.5×) | skipped (cuDNN ABI) | skipped (TRT EP 不可用; 引擎构建成功) |
 
 **结果解读(命中情景 4:Both deep < LGB)**
 

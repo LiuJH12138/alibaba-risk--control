@@ -41,7 +41,7 @@ def build_engine(onnx_path: str, engine_path: str, fp16: bool = True) -> bool:
         # 动态 batch:min 1 / opt 64 / max 256
         name_to_input = {network.get_input(i).name: network.get_input(i)
                          for i in range(network.num_inputs)}
-        for name in ["seq", "mask", "graph_emb"]:
+        for name in ["seq_cat", "seq_num", "mask", "graph_emb"]:
             shape = list(name_to_input[name].shape)
             profile.set_shape(name, [1] + shape[1:], [64] + shape[1:], [256] + shape[1:])
         config.add_optimization_profile(profile)
