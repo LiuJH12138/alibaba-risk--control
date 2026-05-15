@@ -173,3 +173,78 @@ python -m src.deploy.benchmark        # 双模型延迟(写 benchmark_stage2.jso
   外部信号是让深度模型有机会跑赢 LGB 的方向
 
 设计决策、实施 bug、完整诚实分析见 `docs/DESIGN_JOURNAL.md` v2 节。
+
+
+## Stage 3a 结果(2026-05-15)— 异质图 + 损失深化
+
+**新命令**:
+```bash
+python -m src.data.build              # 同时产出 hetero_graph.pt + entity_features_*.pt
+python -c "from src.train import run_stage3a_matrix; run_stage3a_matrix()"  # 4 配置矩阵
+# 或单独跑某配置:python -c "from src.train import run_stage3a_matrix, STAGE3A_CONFIGS; run_stage3a_matrix(configs=[c for c in STAGE3A_CONFIGS if c['name']=='hetero_asym_balanced'])"
+
+# 后处理:训练曲线 + 团伙识别
+for cfg in hetero_baseline hetero_asym_balanced hetero_label_smoothing hetero_HNM_root_cause; do
+  python -c "from src.analysis.plot_curves import plot_curves; plot_curves(f'experiments/training_history_$cfg.json', f'experiments/curves_$cfg.png')"
+done
+python -c "from src.analysis.centrality import run_centrality_for_config; run_centrality_for_config('artifacts/best_hetero_asym_balanced.pt', 'hetero_asym_balanced')"
+```
+
+**实验矩阵**(IEEE-CIS pruned_v + heterogeneous graph)
+
+| 配置 | val_pr_auc | val_roc_auc | val_ks | val_recall@fpr=.01 | converged | best/total |
+|------|-----------|-------------|--------|-----|-----------|------------------|
+| Stage 2 deep_pruned (homo, 对照) | 0.4312 | 0.8639 | 0.5637 | 0.3713 | ✅ | (Stage 2 已有) |
+| Stage 2 deep_full (homo, best Stage 2 deep) | 0.4370 | 0.8621 | 0.5731 | 0.3632 | ✅ | (Stage 2 已有) |
+| **hetero_baseline** | **0.3965** | 0.8255 | 0.5390 | 0.3580 | ❌ (oscillation) | 13/21 |
+| **hetero_asym_balanced** | **0.4294** | 0.8203 | 0.5087 | 0.4109 | ✅ | 37/40 |
+| **hetero_label_smoothing** | **0.4155** | 0.8104 | 0.5037 | 0.3920 | ❌ (oscillation) | 33/40 |
+| **hetero_HNM_root_cause** | **0.3035** | 0.8218 | 0.4981 | 0.2608 | ❌ (short-run; oscillation) | 2/10 |
+| Stage 2 lgbm_pruned (对照) | 0.5303 | 0.8980 | 0.6416 | 0.4678 | ✅ | (Stage 2 已有) |
+| Stage 2 lgbm_full (best Stage 2 LGB) | 0.5556 | 0.9016 | 0.6475 | 0.4941 | ✅ | (Stage 2 已有) |
+
+**收敛审计要点**:
+- `hetero_asym_balanced`(γ_pos=2, γ_neg=6, α=0.4)是唯一干净收敛(40/40 epoch,无 warning)的配置
+- `hetero_baseline` 训练 21 epoch 后早停,末 5 epoch PR-AUC 震荡 0.365–0.386(>0.02 阈值,被审计标记)
+- `hetero_label_smoothing` 训练 40 epoch,末 5 epoch 震荡 0.380–0.406
+- `hetero_HNM_root_cause` 仅 10 epoch 即早停(best @ epoch 2)——这是预期负面结果,见 HNM 根因诊断节
+
+**训练曲线**(每张 = train_loss + val PR/ROC-AUC + lr,红线标 best_epoch)
+
+- ![hetero_baseline](experiments/curves_hetero_baseline.png)
+- ![hetero_asym_balanced](experiments/curves_hetero_asym_balanced.png)
+- ![hetero_label_smoothing](experiments/curves_hetero_label_smoothing.png)
+- ![hetero_HNM_root_cause](experiments/curves_hetero_HNM_root_cause.png)
+
+**团伙识别**(post-hoc · best config)
+
+`experiments/core_entities_hetero_asym_balanced.json`:1121 个高置信欺诈交易构成的子图上,4 类实体节点按 PageRank+degree 排序。top-3 card1 度数 = 84 / 82 / 76(欺诈相关 card1 中位数 ~5),清晰指示团伙核心。同时输出 `core_entities_hetero_baseline.json` 作对照(862 fraud seeds)。
+
+**HNM 根因诊断**(简历"难例挖掘"诚实解读)
+
+详见 `docs/DESIGN_JOURNAL.md` v3 的 HNM 节。要点:`mean_prob_kept_neg ≈ mean_prob_dropped_neg ≈ 0.40` 表明在 IEEE-CIS 早中期训练阶段,模型对所有负样本预测都不确定,HNM 的"挑难例"实际等价于随机采样,导致 Stage 1 gated_plus_hnm 早停。修复方向是 HNM warmup,留作 Stage 3+。
+
+**结果解读(命中情景 D,临界)**
+
+- 最佳 Stage 3a 配置 `hetero_asym_balanced` PR-AUC = **0.4294**,落在 Stage 2 deep_pruned(0.4312)和 deep_full(0.4370)之间,但**两者都略低**。技术上属四情景中的 D("hetero best < 0.4370"),差距仅 -0.0076,实质是平局。
+- 4 配置 PR-AUC 跨度 0.30 – 0.43:**损失函数对结果的影响远大于图骨干**。这是本 stage 最实在的发现。
+- 异质图骨干本身没让深度模型跑赢同构基线。Stage 3+ 应转向 HAN/HGT 注意力或预训练,而非继续调损失。
+
+**简历映射(Stage 3a 增量)**
+
+| 简历点 | Stage 1 | Stage 2 | Stage 3a |
+|---|---|---|---|
+| 行为序列与异质图建模 | SequenceTower (Transformer-GRU) | per-field 类别 embedding | **HeteroGraphTower (HeteroConv ×9 SAGEConv) + 实体先验 + 后处理 PageRank 团伙识别** |
+| 极度不平衡样本处理 | HybridFocal + HNM | 全 V 列消融 | **4 损失 ablation + HNM 失效根因诊断** |
+| 性能优化 | ONNX/TensorRT (homo) | 双策略 ONNX | (异质图部署留 Stage 3b) |
+
+**Honest Negative Results / Caveats**
+
+- `hetero_baseline` (converged=False, oscillation 0.365-0.386):图骨干升级单变量未带来增益,反而引入震荡
+- `hetero_label_smoothing` (converged=False, oscillation 0.380-0.406):label smoothing 帮助有限,未能稳定训练
+- `hetero_HNM_root_cause` (converged=False, 早停 epoch 2):是预期的诊断负面结果,HNM 根因已查明
+- 唯一干净收敛的 `hetero_asym_balanced` 仍轻微落后 Stage 2 best deep —— **本数据集上图结构升级 alone 不能反超 GBDT,但损失工程能把差距压到 noise 级别**
+
+**测试覆盖**:全栈 52 个 pytest 通过(Stage 1+2 已有 37 + Stage 3a 新增 14 + 1 额外 = 52)。
+
+设计决策、实施细节、bug + 修复、四情景诚实分析见 `docs/DESIGN_JOURNAL.md` v3 节。
