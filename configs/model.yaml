@@ -1,13 +1,13 @@
 d_model: 128
 n_heads: 4
 n_transformer_layers: 2
-d_seq: 128
+d_seq: 128                  # GRU hidden
 d_graph: 128
 graphsage_layers: 2
 d_fuse: 128
 mlp_hidden: 64
 dropout: 0.1
-cat_emb_dim: 16
+cat_emb_dim: 16             # 每个类别字段 embedding 维
 graph_backbone: hetero      # Stage 3a NEW: 'homo' (Stage 2 GraphTower) | 'hetero' (HeteroGraphTower)
 hetero_d_graph: 64          # Stage 3a NEW: smaller than d_graph because HeteroConv has 9 SAGEConvs per layer
 hetero_n_layers: 2          # Stage 3a NEW: number of HeteroConv layers

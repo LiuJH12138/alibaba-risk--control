@@ -2,7 +2,7 @@ batch_size: 1024
 lr: 0.001
 weight_decay: 0.00001
 epochs: 40                  # Stage 3a: was 20, raised for convergence guarantee
-warmup_steps: 500           # Stage 3a: kept 500 (was already 500)
+warmup_steps: 500
 grad_clip: 1.0
 seed: 42
 neighbor_sample: [15, 10]
