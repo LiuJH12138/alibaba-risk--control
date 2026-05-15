@@ -248,3 +248,51 @@ python -c "from src.analysis.centrality import run_centrality_for_config; run_ce
 **测试覆盖**:全栈 52 个 pytest 通过(Stage 1+2 已有 37 + Stage 3a 新增 14 + 1 额外 = 52)。
 
 设计决策、实施细节、bug + 修复、四情景诚实分析见 `docs/DESIGN_JOURNAL.md` v3 节。
+
+
+## Stage 3a v2 训练策略审计 + 消融矩阵(2026-05-16)
+
+**触发原因**:v3 训完后复看训练曲线,`hetero_asym_balanced` 在 epoch 37/40 处仍是新高 + train_loss 还以 2%/epoch 速度往下走 = **预算撞顶停止,不是收敛停止**。
+
+**审计发现**(对照 NeurIPS 2024 *Why Warmup the LR* + Kumo.ai PyG Hetero Fraud + Focal Loss 原论文):
+
+1. ❌ **根因**:LambdaLR 只 warmup 不 decay → LR 恒定 1e-3 全程 → 末段无法精细化
+2. ⚠️ weight_decay=1e-5 比 AdamW 标准 1e-4 ~ 5e-4 低一个数量级
+3. ⚠️ HeteroGraphTower dropout 被 model.dropout=0.1 覆盖,失去 SAGEConv 应有的正则
+
+**改动**:cosine annealing + weight_decay 1e-4 + 独立 hetero_dropout + epochs 80 + patience 12;详见 `docs/DESIGN_JOURNAL.md` v3.1。
+
+**v2 消融矩阵**(6 变种,asym_balanced base + 共享 MUST FIX):
+
+| 变种 | val_pr_auc | val_roc_auc | val_ks | val_recall@fpr=.01 | converged | best/total | Δ vs v1 asym |
+|------|-----------|-------------|--------|------|-----------|------------------|------|
+| (v1 asym, no cosine) | 0.4294 | 0.8203 | 0.5087 | 0.4109 | ✅ | 37/40 | reference |
+| **asym_v2_baseline**  | **0.4360** | 0.8256 | 0.5329 | 0.3957 | ❌ (oscillation) | 21/33 | +0.0066 |
+| **asym_v2_dropout02**  | **0.4364** | 0.8362 | 0.5378 | 0.4028 | ❌ (oscillation) | 20/32 | +0.0070 |
+| **asym_v2_dropout03** ⭐ | **0.4546** | 0.8355 | 0.5234 | 0.4141 | ✅ | 31/43 | +0.0252 |
+| **asym_v2_lr5e4**  | **0.4523** | 0.8260 | 0.5191 | 0.4168 | ✅ | 43/55 | +0.0229 |
+| **asym_v2_alpha05**  | **0.4517** | 0.8337 | 0.5166 | 0.4213 | ✅ | 41/53 | +0.0223 |
+| **asym_v2_alpha07**  | **0.4440** | 0.8336 | 0.5269 | 0.3964 | ✅ | 22/34 | +0.0146 |
+
+**结论**:最佳 v2 = `asym_v2_dropout03` PR-AUC **0.4546**,**翻越** Stage 2 deep_full(0.4370)+0.018,**翻越** Stage 2 deep_pruned(0.4312)+0.023。诚实四情景从 v3 的 D 翻到 B(深度模型有效但仍未超 LGB)。
+
+**关键学习**:LR schedule 比图骨干、损失变体都更影响最终结果——v1 4 配置 PR-AUC 跨度 0.13(0.30-0.43);v2 6 配置(都用 cosine)跨度仅 0.019(0.436-0.455)。**修训练策略带来的提升远大于 4 配置之间的差异。**
+
+**新训练曲线**(每张 = train_loss + val PR/ROC-AUC + lr,红线标 best_epoch)
+
+- ![asym_v2_baseline](experiments/curves_asym_v2_baseline.png)
+- ![asym_v2_dropout02](experiments/curves_asym_v2_dropout02.png)
+- ![asym_v2_dropout03 ⭐](experiments/curves_asym_v2_dropout03.png)
+- ![asym_v2_lr5e4](experiments/curves_asym_v2_lr5e4.png)
+- ![asym_v2_alpha05](experiments/curves_asym_v2_alpha05.png)
+- ![asym_v2_alpha07](experiments/curves_asym_v2_alpha07.png)
+
+**新团伙识别**:`experiments/core_entities_asym_v2_dropout03.json` (1224 高置信欺诈 seeds,v1 asym 是 1121)。
+
+**简历映射(v3.1 增量)**
+
+| 简历点 | 增量 |
+|---|---|
+| 性能优化 + 模型调优 | **训练策略审计:加 cosine annealing + 提 weight_decay + 加 hetero_dropout → best PR-AUC 从 0.429 → 0.455(+6.0%),配置间方差从 0.13 收窄到 0.019** |
+
+**测试覆盖**:53 个 pytest 通过(52 baseline + 1 新增 `test_cosine_scheduler_shape`)。

@@ -568,3 +568,95 @@ max_prob_dropped_neg  ≈ 0.40    (被丢弃负样本中预测分最高的)
 - ❌ Heterogeneous Attention (HAN/HGT) → Stage 3+,先验证 SAGEConv 基线
 - ❌ 实体节点 dynamic embedding → 工业级才需要
 - ❌ HNM warmup 修复 → 留作 Stage 3+ 的明确改进项,基于本 stage 的诊断证据
+
+
+---
+
+# v3.1 — Stage 3a Training-Strategy Audit + v2 Ablation Matrix (2026-05-16)
+
+## 触发原因
+
+v3 落地后用户复看训练曲线发现:`hetero_asym_balanced` 的 train_loss 在 epoch 40(预算上限)仍以 ~2%/epoch 速度往下走,best_epoch=37 离末尾仅 3 步——这意味着**训练是预算撞顶停的,不是梯度收敛停的**。换句话说,v3 的 best PR-AUC 0.4294 不是这个架构的真实潜力上限。
+
+## 训练策略审计
+
+带着用户的硬要求"确保每个训练都达到最优",对照学术与社区共识(NeurIPS 2024 *Why Warmup the LR*、Kumo.ai PyG Hetero Fraud Guide、Focal Loss 原论文、PyG 官方异质图教程),系统审计了 4 个原配置的训练超参,识别出**一个根因 + 两个加分项**:
+
+### 根因(直接因果于 v3 未收敛)
+
+- **❌ 学习率调度只有 warmup,没有 decay**:`LambdaLR(lambda step: min(1.0, (step+1)/warmup))` 在 warmup 500 步后 LR 恒定在 1e-3 直到训练结束。NeurIPS 2024 与 PyG 官方文档明确指出现代训练应是 warmup → cosine annealing 到 `eta_min ≈ peak_lr * 0.01`。恒定 LR 让模型无法精细化(末段震荡 0.365-0.406 是直接症状),也让长训练浪费在"高 LR 抖动"上。
+
+### 加分项
+
+- **⚠️ weight_decay = 1e-5**:AdamW 的标准范围是 1e-4 到 5e-4。1e-5 实际等于"几乎不正则化"。1.79M 参数 + 472K 训练样本下,温和加正则有空间。
+- **⚠️ HeteroGraphTower dropout 被错误覆盖到 0.1**:`HeteroGraphTower(dropout=0.2)` 是模块自身的合理默认,但 `FraudModel.__init__` 里写的是 `dropout=c["dropout"]`,因此 model.yaml 的 0.1 (面向 Transformer 的小 dropout)覆盖了它。9 条 SAGEConv × 2 层的容量需要更强的正则。
+
+## 代码改动(commit 406fa35)
+
+1. `_build_scheduler()` 新工具函数:`SequentialLR(LinearLR warmup → CosineAnnealingLR)`
+2. `train_one_config` 与 `train_one_config_hetero` 都切到新 scheduler(Stage 1/2 同样受益)
+3. `train_one_config_hetero` 增加 `train_overrides` + `model_overrides` 两个 kwarg,支持 per-variant 消融而无需改 yaml
+4. `model.yaml` 加 `hetero_dropout: 0.2`,`FraudModel` 改为 `c.get("hetero_dropout", c["dropout"])` 让 HeteroGraphTower 有独立正则旋钮
+5. `train.yaml`:`epochs 40 → 80`,`patience 8 → 12`,`weight_decay 1e-5 → 1e-4`,新增 `cosine_eta_min_ratio: 0.01`
+6. `STAGE3A_V2_CONFIGS` 列表声明 6 个消融变种
+7. TDD 测试 `test_cosine_scheduler_shape` 验证 LR 轨迹(start ~1e-9 → warmup 末 ~1e-3 → 余弦到 ~1e-5,后段单调非升)
+
+测试集:**52 → 53 (+1 cosine 测试)**
+
+## v2 消融矩阵结果
+
+所有 6 配置共享 MUST FIX(cosine + wd 1e-4 + epochs 80 + patience 12),其它差异如下:
+
+| 变种 | val_pr_auc | val_roc_auc | val_ks | val_recall@fpr=.01 | converged | best/total | Δ vs v1 asym |
+|------|-----------|-------------|--------|------|-----------|------------------|------|
+| (v1 asym, no cosine) | 0.4294 | 0.8203 | 0.5087 | 0.4109 | ✅ | 37/40 | reference |
+| **asym_v2_baseline**  | **0.4360** | 0.8256 | 0.5329 | 0.3957 | ❌ (oscillation) | 21/33 | +0.0066 |
+| **asym_v2_dropout02**  | **0.4364** | 0.8362 | 0.5378 | 0.4028 | ❌ (oscillation) | 20/32 | +0.0070 |
+| **asym_v2_dropout03** ⭐ | **0.4546** | 0.8355 | 0.5234 | 0.4141 | ✅ | 31/43 | +0.0252 |
+| **asym_v2_lr5e4**  | **0.4523** | 0.8260 | 0.5191 | 0.4168 | ✅ | 43/55 | +0.0229 |
+| **asym_v2_alpha05**  | **0.4517** | 0.8337 | 0.5166 | 0.4213 | ✅ | 41/53 | +0.0223 |
+| **asym_v2_alpha07**  | **0.4440** | 0.8336 | 0.5269 | 0.3964 | ✅ | 22/34 | +0.0146 |
+
+最佳 v2 配置:**asym_v2_dropout03** (PR-AUC **0.4546**)。
+
+## 与原 Stage 2 / LGB 的对比(更新四情景)
+
+| 基准 | PR-AUC | Δ vs best_v2 |
+|------|--------|------|
+| Stage 2 deep_pruned (homo, 同 v_strategy) | 0.4312 | **+0.0234** ✅ |
+| Stage 2 deep_full (best Stage 2 deep) | 0.4370 | **+0.0176** ✅ |
+| Stage 2 lgbm_pruned | 0.5303 | -0.0757 |
+| Stage 2 lgbm_full (best LGB) | 0.5556 | -0.1010 |
+
+## 诚实四情景结论(从 v3 的 D 翻到 B)
+
+- [ ] hetero best PR-AUC > 0.5556 (best LGB lgbm_full):深度模型反超传统模型 ✅
+- [x] hetero best PR-AUC ∈ (0.4370, 0.5556):异质图有效但未超 LGB ← **v3.1 落点(0.4546)**
+- [ ] hetero best PR-AUC ≈ 0.4370 (best Stage 2 deep deep_full):异质图帮助有限
+- [ ] hetero best PR-AUC < 0.4370:实现需排查或同构已够
+
+## 解读
+
+1. **修训练策略带来的提升远大于 4 配置之间的差异**:v1 4 配置跨度 0.30-0.43(0.13 跨度),v2 6 配置跨度 0.436-0.455(0.019 跨度,且都高)。**LR schedule 才是 Stage 3a 的真瓶颈**,不是图骨干或损失。
+2. **dropout 0.3 (asym_v2_dropout03) 是干净赢家**:9 条 SAGEConv × 2 层 + 472K 样本,确实需要更强正则化。
+3. **lr=5e-4 (asym_v2_lr5e4) 几乎并列第二**:验证了"高 lr + 长训练"组合可以替代"标准 lr + cosine",但收敛更稳的还是 dropout 0.3。
+4. **cosine alone(asym_v2_baseline 0.4360)+0.007 比 v1 提升,但仍未 converged**:cosine 修了 LR 末段震荡,但单独不够,要配合 dropout 提到 0.3 才彻底稳定。
+5. **alpha 0.7(过度放大正样本)反而最差**:0.4440 比 0.5/0.4 都低,说明在 IEEE-CIS 这种 3.5% 不平衡度下,focal_alpha 在 0.4-0.5 区间最佳。
+
+## 团伙识别更新
+
+新最佳模型 `asym_v2_dropout03` 在 val 集上识别出 **1224 个高置信欺诈交易**(v1 asym 是 1121,提升 9%)。`experiments/core_entities_asym_v2_dropout03.json` 给出新的 top-20 entity per type。
+
+## 简历映射(精简一句)
+
+- "性能优化"+"模型调优":**审计了原训练策略,识别 LR schedule + 正则化两个根因,加 cosine annealing + 提 weight_decay + 加 hetero_dropout 后 best PR-AUC 从 0.429 提升到 0.455(+6.0%),且配置间方差从 0.13 收窄到 0.019(收敛性显著改善)**
+
+## v3.1 的 Stage 3a 完成体
+
+DoD soft gate 全部命中:
+
+- [x] hetero best PR-AUC ≥ Stage 2 deep_pruned 0.4312:0.4546 ≥ 0.4312 ✅
+- [x] 至少 1 个配置 converged=True 且 PR-AUC ≥ 0.40:4 个 ≥ 0.44 ✅
+- [x] 4 个配置 converged=True(v2 矩阵):dropout03 / lr5e4 / alpha05 / alpha07 ✅
+
+测试覆盖:**53 测试 100% 通过**(52 baseline + 1 cosine 测试)
