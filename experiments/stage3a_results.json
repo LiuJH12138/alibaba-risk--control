@@ -58,5 +58,36 @@
         "focal_alpha": 0.4
       }
     }
+  },
+  "hetero_label_smoothing": {
+    "roc_auc": 0.8103826109507534,
+    "pr_auc": 0.41545845943358317,
+    "ks": 0.503722256184034,
+    "recall_at_fpr_0.01": 0.39197834645669294,
+    "fpr_at_recall_0.90": 0.6767212654764828,
+    "audit": {
+      "best_epoch": 33,
+      "total_epochs": 40,
+      "last5_pr_auc": [
+        0.40559176502080785,
+        0.3821616056144894,
+        0.39288543194538456,
+        0.37993079604359065,
+        0.39778017650393116
+      ],
+      "warnings": [
+        "\u26a0\ufe0f  \u672b 5 epoch val_pr_auc \u9707\u8361 > 0.02 (oscillation),\u672a\u6536\u655b"
+      ]
+    },
+    "converged": false,
+    "train_seconds": 1788.4,
+    "v_strategy": "pruned_v",
+    "config": {
+      "name": "hetero_label_smoothing",
+      "use_hnm": false,
+      "loss_overrides": {
+        "label_smoothing_eps": 0.1
+      }
+    }
   }
 }
