@@ -60,33 +60,39 @@ def test_all_modes_run():
         assert out.shape == (3,)
 
 def test_fraud_model_train_forward():
-    model = FraudModel(feat_dim=16, model_cfg={
+    model = FraudModel(cat_cardinalities=[5, 7, 4], n_num_total=8, model_cfg={
         "d_model": 32, "n_heads": 4, "n_transformer_layers": 1, "d_seq": 24,
         "d_graph": 24, "graphsage_layers": 2, "d_fuse": 16, "mlp_hidden": 8,
-        "dropout": 0.0}, fusion_mode="gated")
-    seq = torch.randn(6, 10, 16)
+        "dropout": 0.0, "cat_emb_dim": 4}, fusion_mode="gated")
+    seq_cat = torch.randint(0, 4, (6, 10, 3))
+    seq_num = torch.randn(6, 10, 8)
     mask = torch.ones(6, 10, dtype=torch.bool)
-    x = torch.randn(30, 16)
+    x_cat = torch.randint(0, 4, (30, 3))
+    x_num = torch.randn(30, 8)
     edge_index = torch.randint(0, 30, (2, 60))
     seed = torch.arange(6)
-    logit = model(seq, mask, x, edge_index, seed)
+    logit = model(seq_cat, seq_num, mask, x_cat, x_num, edge_index, seed)
     assert logit.shape == (6,)
 
 def test_fraud_model_online_forward_uses_precomputed_graph_emb():
-    model = FraudModel(feat_dim=8, model_cfg={
+    model = FraudModel(cat_cardinalities=[5, 7], n_num_total=4, model_cfg={
         "d_model": 16, "n_heads": 2, "n_transformer_layers": 1, "d_seq": 12,
         "d_graph": 12, "graphsage_layers": 2, "d_fuse": 8, "mlp_hidden": 4,
-        "dropout": 0.0}, fusion_mode="gated").eval()
-    seq = torch.randn(3, 5, 8)
+        "dropout": 0.0, "cat_emb_dim": 4}, fusion_mode="gated").eval()
+    seq_cat = torch.randint(0, 4, (3, 5, 2))
+    seq_num = torch.randn(3, 5, 4)
     mask = torch.ones(3, 5, dtype=torch.bool)
     graph_emb = torch.randn(3, 12)
-    logit = model.forward_online(seq, mask, graph_emb)
+    logit = model.forward_online(seq_cat, seq_num, mask, graph_emb)
     assert logit.shape == (3,)
-    # 梯度流检查:train forward 下三塔都有梯度
+    # 梯度流:train forward 下 mixer + 两塔都有梯度
     model.train()
-    x = torch.randn(10, 8); edge_index = torch.randint(0, 10, (2, 20))
-    out = model(seq, mask, x, edge_index, torch.arange(3))
+    x_cat = torch.randint(0, 4, (10, 2))
+    x_num = torch.randn(10, 4)
+    edge_index = torch.randint(0, 10, (2, 20))
+    out = model(seq_cat, seq_num, mask, x_cat, x_num, edge_index, torch.arange(3))
     out.sum().backward()
+    assert model.mixer.embeddings[0].weight.grad is not None
     assert model.seq_tower.input_proj.weight.grad is not None
     assert model.graph_tower.convs[0].lin_l.weight.grad is not None
 
