@@ -10,50 +10,52 @@ from src.models.fraud_model import FraudModel
 from src.models.losses import HybridFocalLoss, hard_negative_mining
 from src.evaluate import compute_metrics
 
+
 def _set_seed(seed: int):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    torch.manual_seed(seed); np.random.seed(seed)
+
 
 @torch.no_grad()
 def _evaluate(model, loader, device) -> dict:
     model.eval()
     scores, labels = [], []
     for b in loader:
-        logit = model(b["seq"].to(device), b["mask"].to(device),
-                      b["x"].to(device), b["edge_index"].to(device),
-                      b["seed_local"].to(device))
+        logit = model(b["seq_cat"].to(device), b["seq_num"].to(device),
+                      b["mask"].to(device),
+                      b["x_cat"].to(device), b["x_num"].to(device),
+                      b["edge_index"].to(device), b["seed_local"].to(device))
         scores.append(torch.sigmoid(logit).cpu().numpy())
         labels.append(b["label"].cpu().numpy())
     return compute_metrics(np.concatenate(labels), np.concatenate(scores))
 
+
 def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
-                     model_cfg, train_cfg, device="cuda"):
-    """训练单个配置并返回 val 指标。配置 = (fusion_mode, use_hnm, loss 参数)。"""
+                     cat_cardinalities, n_num_total,
+                     model_cfg, train_cfg, device="cuda",
+                     checkpoint_path: str | None = None):
+    """训练单配置。返回 best 指标。可选保存 best checkpoint 到 checkpoint_path。"""
     _set_seed(train_cfg["seed"])
-    feat_dim = graph.x.shape[1]
-    model = FraudModel(feat_dim, model_cfg, fusion_mode=fusion_mode).to(device)
+    model = FraudModel(cat_cardinalities, n_num_total, model_cfg, fusion_mode).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                             weight_decay=train_cfg["weight_decay"])
     warmup = train_cfg["warmup_steps"]
-    def _lr_lambda(step):
-        return min(1.0, (step + 1) / max(1, warmup))
-    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, _lr_lambda)
-    loss_fn = HybridFocalLoss(train_cfg["focal_gamma_pos"],
-                              train_cfg["focal_gamma_neg"],
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda step: min(1.0, (step + 1) / max(1, warmup)))
+    loss_fn = HybridFocalLoss(train_cfg["focal_gamma_pos"], train_cfg["focal_gamma_neg"],
                               train_cfg["focal_alpha"], reduction="none")
     train_loader = make_loader(graph, seq_all, split["train_idx"],
                                train_cfg["batch_size"], train_cfg["neighbor_sample"])
     val_loader = make_loader(graph, seq_all, split["val_idx"],
-                             train_cfg["batch_size"], train_cfg["neighbor_sample"],
-                             shuffle=False)
+                             train_cfg["batch_size"], train_cfg["neighbor_sample"], shuffle=False)
 
     best_pr, best_metrics, patience = -1.0, None, 0
     for epoch in range(train_cfg["epochs"]):
         model.train()
         for b in train_loader:
-            logit = model(b["seq"].to(device), b["mask"].to(device),
-                          b["x"].to(device), b["edge_index"].to(device),
-                          b["seed_local"].to(device))
+            logit = model(b["seq_cat"].to(device), b["seq_num"].to(device),
+                          b["mask"].to(device),
+                          b["x_cat"].to(device), b["x_num"].to(device),
+                          b["edge_index"].to(device), b["seed_local"].to(device))
             target = b["label"].to(device)
             per_sample = loss_fn.per_sample(logit, target)
             if use_hnm:
@@ -62,50 +64,64 @@ def train_one_config(graph, seq_all, split, fusion_mode, use_hnm,
                 loss = per_sample[keep].mean()
             else:
                 loss = per_sample.mean()
-            opt.zero_grad()
-            loss.backward()
+            opt.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg["grad_clip"])
-            opt.step()
-            scheduler.step()
+            opt.step(); scheduler.step()
         metrics = _evaluate(model, val_loader, device)
         if metrics["pr_auc"] > best_pr:
             best_pr, best_metrics, patience = metrics["pr_auc"], metrics, 0
+            if checkpoint_path is not None:
+                Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+                torch.save(model.state_dict(), checkpoint_path)
         else:
             patience += 1
             if patience >= train_cfg["early_stop_patience"]:
                 break
     return best_metrics
 
-# 实验矩阵:每行 = 一个对比配置,映射回简历 bullet
-EXPERIMENT_MATRIX = [
-    {"name": "seq_only",        "fusion_mode": "seq_only",  "use_hnm": False},
-    {"name": "graph_only",      "fusion_mode": "graph_only","use_hnm": False},
-    {"name": "concat_fusion",   "fusion_mode": "concat",    "use_hnm": False},
-    {"name": "gated_fusion",    "fusion_mode": "gated",     "use_hnm": False},
-    {"name": "gated_plus_hnm",  "fusion_mode": "gated",     "use_hnm": True},
-]
 
-def run_experiment_matrix(device="cuda"):
-    """跑全部实验矩阵,结果落 experiments/results.json。"""
-    graph = torch.load("data/processed/graph.pt", weights_only=False)
-    seq_all = torch.load("data/processed/seq_all.pt", weights_only=False)
-    split = torch.load("data/processed/split.pt", weights_only=False)
+# Stage 2 矩阵:gated_fusion × {full_v, pruned_v}
+STAGE2_DEEP_CONFIGS = [{"name": "deep_full", "v_strategy": "full_v"},
+                       {"name": "deep_pruned", "v_strategy": "pruned_v"}]
+
+
+def run_stage2_matrix(device="cuda"):
+    """跑 Stage 2 深度模型矩阵(2 跑),写 experiments/stage2_results.json。"""
     model_cfg = load_config("model")
     train_cfg = load_config("train")
-
-    results = {}
-    for exp in EXPERIMENT_MATRIX:
-        t0 = time.time()
-        metrics = train_one_config(graph, seq_all, split, exp["fusion_mode"],
-                                   exp["use_hnm"], model_cfg, train_cfg, device)
-        metrics["train_seconds"] = round(time.time() - t0, 1)
-        results[exp["name"]] = metrics
-        print(exp["name"], metrics)
-
     Path("experiments").mkdir(exist_ok=True)
-    with open("experiments/results.json", "w") as f:
-        json.dump(results, f, indent=2)
+    Path("artifacts").mkdir(exist_ok=True)
+
+    out_path = Path("experiments/stage2_results.json")
+    results = json.loads(out_path.read_text()) if out_path.exists() else {}
+
+    for cfg in STAGE2_DEEP_CONFIGS:
+        name, v_strategy = cfg["name"], cfg["v_strategy"]
+        proc_dir = Path("data/processed") / v_strategy
+        graph = torch.load(proc_dir / "graph.pt", weights_only=False)
+        seq_all = torch.load(proc_dir / "seq_all.pt", weights_only=False)
+        split = torch.load(proc_dir / "split.pt", weights_only=False)
+        manifest = json.loads((proc_dir / "manifest.json").read_text())
+        meta = json.loads((proc_dir / "feature_meta.json").read_text())
+        cat_cardinalities = [meta["cat_cardinalities"][c] for c in meta["cat_cols"]]
+        n_num_total = manifest["n_num_total"]
+
+        ckpt = f"artifacts/best_{name}.pt"
+        t0 = time.time()
+        metrics = train_one_config(graph, seq_all, split, fusion_mode="gated",
+                                   use_hnm=False,
+                                   cat_cardinalities=cat_cardinalities,
+                                   n_num_total=n_num_total,
+                                   model_cfg=model_cfg, train_cfg=train_cfg,
+                                   device=device, checkpoint_path=ckpt)
+        metrics["train_seconds"] = round(time.time() - t0, 1)
+        metrics["v_strategy"] = v_strategy
+        results[name] = metrics
+        out_path.write_text(json.dumps(results, indent=2))
+        print(f"{name}: {metrics}")
+
     return results
 
+
 if __name__ == "__main__":
-    run_experiment_matrix()
+    run_stage2_matrix()
