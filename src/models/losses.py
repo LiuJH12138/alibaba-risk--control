@@ -60,3 +60,44 @@ def hard_negative_mining(per_sample_loss: torch.Tensor, targets: torch.Tensor,
         hardest = torch.topk(neg_losses, k).indices
         keep[hardest] = True
     return keep
+
+def hard_negative_mining_with_diagnostics(per_sample_loss: torch.Tensor,
+                                          targets: torch.Tensor,
+                                          neg_pos_ratio: float,
+                                          probs: torch.Tensor) -> tuple[torch.Tensor, dict]:
+    """Same selection logic as hard_negative_mining, plus a diagnostics dict.
+
+    Args:
+        per_sample_loss: [B] per-sample loss values (already detached)
+        targets:         [B] binary labels (float)
+        neg_pos_ratio:   how many hard negatives to keep per positive
+        probs:           [B] predicted P(fraud), used for diagnostics ONLY
+
+    Returns:
+        keep:        [B] bool mask, True = participate in backward
+        diagnostics: dict with keys
+            n_pos, n_neg, n_kept_neg,
+            mean_prob_kept_neg, mean_prob_dropped_neg,
+            max_prob_dropped_neg
+    """
+    pos_mask = targets > 0.5
+    neg_mask = ~pos_mask
+    n_pos = int(pos_mask.sum().item())
+    n_neg = int(neg_mask.sum().item())
+    keep = pos_mask.clone()
+    k = min(int(neg_pos_ratio * max(n_pos, 1)), n_neg)
+    if k > 0:
+        neg_losses = per_sample_loss.masked_fill(pos_mask, float("-inf"))
+        hardest = torch.topk(neg_losses, k).indices
+        keep[hardest] = True
+    n_kept_neg = int((keep & neg_mask).sum().item())
+    dropped_neg_mask = neg_mask & ~keep
+    diagnostics = {
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "n_kept_neg": n_kept_neg,
+        "mean_prob_kept_neg": float(probs[keep & neg_mask].mean().item()) if n_kept_neg > 0 else 0.0,
+        "mean_prob_dropped_neg": float(probs[dropped_neg_mask].mean().item()) if dropped_neg_mask.any() else 0.0,
+        "max_prob_dropped_neg": float(probs[dropped_neg_mask].max().item()) if dropped_neg_mask.any() else 0.0,
+    }
+    return keep, diagnostics
