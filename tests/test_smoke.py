@@ -42,13 +42,14 @@ from src.deploy.export_onnx import export_online_path, verify_onnx_parity
 
 def test_onnx_export_and_parity(tmp_path):
     from src.models.fraud_model import FraudModel
-    model = FraudModel(feat_dim=12, model_cfg={
+    model = FraudModel(cat_cardinalities=[5, 7], n_num_total=4, model_cfg={
         "d_model": 16, "n_heads": 2, "n_transformer_layers": 1, "d_seq": 12,
         "d_graph": 12, "graphsage_layers": 2, "d_fuse": 8, "mlp_hidden": 4,
-        "dropout": 0.0}, fusion_mode="gated").eval()
+        "dropout": 0.0, "cat_emb_dim": 4}, fusion_mode="gated").eval()
     onnx_path = str(tmp_path / "model.onnx")
-    export_online_path(model, feat_dim=12, seq_len=8, d_graph=12, path=onnx_path)
-    assert verify_onnx_parity(model, onnx_path, feat_dim=12, seq_len=8, d_graph=12)
+    export_online_path(model, n_cat=2, n_num_total=4, seq_len=8, d_graph=12, path=onnx_path)
+    assert verify_onnx_parity(model, onnx_path, n_cat=2, n_num_total=4,
+                              cat_cardinalities=[5, 7], seq_len=8, d_graph=12)
 
 from src.deploy.benchmark import benchmark_torch
 
