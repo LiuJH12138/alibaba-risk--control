@@ -65,7 +65,7 @@ def test_benchmark_torch_returns_latency_stats():
     assert stats["p50_ms"] > 0
 
 def test_end_to_end_pipeline(tiny_raw_df, tmp_path, monkeypatch):
-    """微数据集端到端:特征 → 序列 → 图 → 训练 → 评估,全程跑通。"""
+    """微数据集端到端:特征(dict) → 序列 → 图 → 训练 → 评估,全程跑通。"""
     import numpy as np
     import torch
     from torch_geometric.data import Data
@@ -84,21 +84,31 @@ def test_end_to_end_pipeline(tiny_raw_df, tmp_path, monkeypatch):
                           num_cols=["TransactionAmt", "D1"])
     cut = int(len(df) * 0.8)
     fp.fit(df.iloc[:cut])
-    feat = fp.transform(df).to_numpy().astype("float32")
+    feat = fp.transform(df)                          # dict
+    n_cat = feat["cat_idx"].shape[1]
+    n_num_total = feat["num"].shape[1]
+    cat_cardinalities = [fp.meta["cat_cardinalities"][c] for c in fp.meta["cat_cols"]]
 
-    seq, mask = build_sequences(feat, df["uid"].to_numpy(), dt, seq_len=8)
+    seq_cat, mask = build_sequences(feat["cat_idx"].astype("float32"),
+                                     df["uid"].to_numpy(), dt, seq_len=8)
+    seq_num, _   = build_sequences(feat["num"], df["uid"].to_numpy(), dt, seq_len=8)
     src, dst = build_edges(df, ["card1", "P_emaildomain"], max_degree=20, max_per_entity=10)
-    graph = Data(x=torch.from_numpy(feat),
+
+    graph = Data(cat_x=torch.from_numpy(feat["cat_idx"]),
+                 num_x=torch.from_numpy(feat["num"]),
                  edge_index=torch.from_numpy(np.stack([src, dst])),
                  y=torch.from_numpy(y), t=torch.from_numpy(dt))
-    seq_all = {"seq": torch.from_numpy(seq), "mask": torch.from_numpy(mask)}
+    seq_all = {"cat": torch.from_numpy(seq_cat.astype("int64")),
+               "num": torch.from_numpy(seq_num),
+               "mask": torch.from_numpy(mask)}
     split = {"train_idx": torch.arange(0, cut), "val_idx": torch.arange(cut, len(df))}
 
     result = train_one_config(
         graph, seq_all, split, fusion_mode="gated", use_hnm=True,
+        cat_cardinalities=cat_cardinalities, n_num_total=n_num_total,
         model_cfg={"d_model": 16, "n_heads": 2, "n_transformer_layers": 1,
                    "d_seq": 12, "d_graph": 12, "graphsage_layers": 2,
-                   "d_fuse": 8, "mlp_hidden": 4, "dropout": 0.0},
+                   "d_fuse": 8, "mlp_hidden": 4, "dropout": 0.0, "cat_emb_dim": 4},
         train_cfg={"batch_size": 32, "lr": 1e-3, "weight_decay": 0.0, "epochs": 2,
                    "warmup_steps": 5, "grad_clip": 1.0, "seed": 42,
                    "neighbor_sample": [5, 5], "focal_gamma_pos": 1.0,
