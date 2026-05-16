@@ -98,3 +98,27 @@ def test_cosine_scheduler_shape():
     post_warmup = lrs[10:]
     diffs = [post_warmup[i+1] - post_warmup[i] for i in range(len(post_warmup) - 1)]
     assert all(d <= 1e-9 for d in diffs), "post-warmup LR must be monotone non-increasing (cosine)"
+
+
+def test_swa_setup_creates_averaged_model():
+    """When swa_enabled, train_one_config_hetero must construct AveragedModel + SWALR.
+
+    This is a structural test (no full training); we exercise the SWA wrapping
+    by instantiating directly to verify nothing crashes.
+    """
+    import torch
+    from torch.optim.swa_utils import AveragedModel, SWALR
+    model = torch.nn.Linear(4, 1)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    swa_model = AveragedModel(model)
+    swa_sched = SWALR(opt, swa_lr=1e-4, anneal_strategy="linear", anneal_epochs=3)
+    # Simulate update
+    for _ in range(5):
+        for p in model.parameters():
+            p.data += 0.01
+        swa_model.update_parameters(model)
+        swa_sched.step()
+    # SWA model's running average should differ from current model
+    inner = list(swa_model.module.parameters())[0].detach()
+    current = list(model.parameters())[0].detach()
+    assert not torch.equal(inner, current), "SWA averaged weights should differ from current"

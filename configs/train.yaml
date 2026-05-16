@@ -14,3 +14,6 @@ early_stop_patience: 12       # Stage 3a v2: was 8, raised to tolerate cosine-de
 min_epochs: 10
 label_smoothing_eps: 0.1
 cosine_eta_min_ratio: 0.01    # Stage 3a v2 NEW: cosine LR floor = peak * this ratio (default 1%)
+swa_enabled: false          # Stage 3a v3.3 NEW: when true, wrap model in AveragedModel after swa_start_epoch
+swa_start_epoch: 30         # epoch to begin averaging weights (0-indexed)
+swa_lr: 0.0001              # constant LR to use after SWA starts (typically 10x smaller than peak)

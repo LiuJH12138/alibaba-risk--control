@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 import numpy as np
 import torch
+from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
 
 from src.config import load_config
 from src.dataset import make_loader, make_hetero_loader
@@ -240,6 +241,15 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
     total_steps = train_cfg["epochs"] * len(train_loader)
     scheduler = _build_scheduler(opt, train_cfg, total_steps)
 
+    swa_enabled = bool(train_cfg.get("swa_enabled", False))
+    swa_start_epoch = int(train_cfg.get("swa_start_epoch", 30))
+    swa_lr = float(train_cfg.get("swa_lr", 1e-4))
+    swa_model = None
+    swa_scheduler = None
+    if swa_enabled:
+        swa_model = AveragedModel(model)
+        swa_scheduler = SWALR(opt, swa_lr=swa_lr, anneal_strategy="linear", anneal_epochs=3)
+
     # Resolve loss params (overrides win over train.yaml defaults)
     lo = loss_overrides or {}
     loss_fn = HybridFocalLoss(
@@ -280,9 +290,18 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
                 loss = per_sample.mean()
             opt.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg["grad_clip"])
-            opt.step(); scheduler.step()
+            opt.step()
+            # Use SWA scheduler instead of cosine after swa_start_epoch
+            if swa_enabled and epoch >= swa_start_epoch:
+                swa_scheduler.step()
+            else:
+                scheduler.step()
             running_loss += float(loss.item())
             n_batches += 1
+
+        # After each epoch, update the SWA running average if active
+        if swa_enabled and epoch >= swa_start_epoch:
+            swa_model.update_parameters(model)
 
         epoch_secs = time.time() - t0
         train_loss = running_loss / max(n_batches, 1)
@@ -316,6 +335,24 @@ def train_one_config_hetero(hetero_graph, seq_all, split, fusion_mode, use_hnm,
     if use_hnm and hnm_diag_history:
         Path(f"experiments/hnm_diagnostics_{config_name}.json").write_text(
             json.dumps(hnm_diag_history, indent=2))
+
+    # SWA: evaluate the averaged model on val and save IF it beats best_pr
+    if swa_enabled and swa_model is not None:
+        # No BN layers in this model so we skip update_bn.
+        # Evaluate the averaged model.
+        # The averaged model expects the same input signature as forward_hetero.
+        # AveragedModel wraps the inner forward; call it directly.
+        swa_metrics = _evaluate_hetero(swa_model.module, val_loader, device)
+        print(f"[SWA · {config_name}] swa_pr_auc={swa_metrics['pr_auc']:.4f} vs best_pr={best_pr:.4f}")
+        if swa_metrics["pr_auc"] > best_pr:
+            best_metrics = swa_metrics
+            best_pr = swa_metrics["pr_auc"]
+            if checkpoint_path is not None:
+                # Save the SWA-averaged model's INNER state_dict so it loads
+                # like a normal FraudModel at inference time.
+                torch.save(swa_model.module.state_dict(), checkpoint_path)
+            print(f"[SWA · {config_name}] SWA model WINS, saved to {checkpoint_path}")
+
     return {**(best_metrics or {}), "audit": audit, "converged": len(audit["warnings"]) == 0}
 
 
@@ -425,6 +462,22 @@ def run_stage3a_matrix(device="cuda", v_strategy: str = "pruned_v",
         time.sleep(2)
 
     return results
+
+
+STAGE3A_V3_CONFIGS = [
+    # Both variants share the asym_v2_dropout03 base (best v2 config).
+    # Each one changes EXACTLY ONE additional knob.
+    {"name": "asym_v3_gatv2",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {},
+     "model_overrides": {"hetero_dropout": 0.3, "hetero_conv_type": "gatv2"}},
+    {"name": "asym_v3_swa",
+     "use_hnm": False,
+     "loss_overrides": {"focal_gamma_pos": 2.0, "focal_gamma_neg": 6.0, "focal_alpha": 0.4},
+     "train_overrides": {"swa_enabled": True, "swa_start_epoch": 30, "swa_lr": 0.0001},
+     "model_overrides": {"hetero_dropout": 0.3}},
+]
 
 
 if __name__ == "__main__":

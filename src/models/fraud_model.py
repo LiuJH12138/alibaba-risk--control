@@ -38,6 +38,7 @@ class FraudModel(nn.Module):
                 d_graph=c["hetero_d_graph"],
                 n_layers=c["hetero_n_layers"],
                 dropout=c.get("hetero_dropout", c["dropout"]),
+                conv_type=c.get("hetero_conv_type", "sage"),
             )
             graph_out_dim = c["hetero_d_graph"]
         else:

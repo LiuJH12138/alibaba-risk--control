@@ -241,3 +241,44 @@ def test_fraud_model_backbone_switch():
     fus_homo = sum(p.numel() for p in homo.fusion.parameters())
     fus_hetero = sum(p.numel() for p in hetero.fusion.parameters())
     assert fus_homo == fus_hetero
+
+
+def test_hetero_graph_tower_gatv2_forward_shape():
+    """HeteroGraphTower with conv_type='gatv2' must produce same shape as 'sage'."""
+    import torch
+    from torch_geometric.data import HeteroData
+    from src.models.hetero_graph_tower import HeteroGraphTower
+
+    hg = HeteroData()
+    hg["transaction"].cat_x = torch.zeros(10, 2, dtype=torch.int64)
+    hg["transaction"].num_x = torch.zeros(10, 4, dtype=torch.float32)
+    hg["transaction"].num_nodes = 10
+    for col, n in [("card1", 5), ("addr1", 3), ("P_emaildomain", 2), ("DeviceInfo", 2)]:
+        hg[col].x = torch.randn(n, 5, dtype=torch.float32)
+        hg[col].num_nodes = n
+    for col, fwd, rev in [
+        ("card1", "paid_with", "rev_paid_with"),
+        ("addr1", "shipped_to", "rev_shipped_to"),
+        ("P_emaildomain", "sent_to_email", "rev_sent_to_email"),
+        ("DeviceInfo", "on_device", "rev_on_device"),
+    ]:
+        src = torch.arange(10)
+        dst = torch.zeros(10, dtype=torch.int64)
+        hg["transaction", fwd, col].edge_index = torch.stack([src, dst])
+        hg[col, rev, "transaction"].edge_index = torch.stack([dst, src])
+    hg["transaction", "next_by_uid", "transaction"].edge_index = torch.empty((2, 0), dtype=torch.int64)
+
+    tower = HeteroGraphTower(
+        mixer_out_dim=12, d_graph=8, n_layers=2,
+        entity_types=("card1", "addr1", "P_emaildomain", "DeviceInfo"),
+        dropout=0.0, conv_type="gatv2",
+    )
+    txn_mixed = torch.randn(10, 12)
+    seed_local = torch.arange(10)
+    out = tower(hg, txn_mixed, seed_local)
+    assert out.shape == (10, 8), f"expected (10, 8) got {tuple(out.shape)}"
+    # Verify the inner conv is GATv2Conv
+    from torch_geometric.nn import GATv2Conv
+    first_layer_first_conv = next(iter(tower.convs[0].convs.values()))
+    assert isinstance(first_layer_first_conv, GATv2Conv), \
+        f"expected GATv2Conv, got {type(first_layer_first_conv)}"

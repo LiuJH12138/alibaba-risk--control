@@ -13,3 +13,4 @@ hetero_d_graph: 64          # Stage 3a NEW: smaller than d_graph because HeteroC
 hetero_n_layers: 2          # Stage 3a NEW: number of HeteroConv layers
 hetero_dropout: 0.2         # Stage 3a v2 NEW: HeteroGraphTower-specific dropout (independent of model.dropout)
 entity_feat_dim: 5          # Stage 3a NEW: count, mean_amt, std_amt, fraud_rate_train, days_active
+hetero_conv_type: sage      # Stage 3a v3.3 NEW: 'sage' (default) | 'gatv2' (Brody 2022, attention)
