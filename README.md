@@ -341,3 +341,53 @@ v3.2 之后:**"我搭建了完整 DL 风控栈(序列 + 异质图 + 团伙识别
 详见 `docs/DESIGN_JOURNAL.md` v3.2 节(包含完整 web search 引用、5 类问题清单、未做项的 Stage 3b/3c 计划)。
 
 **测试覆盖**:53 个 pytest 全部通过(无新增,ensemble 不需新代码逻辑)。
+
+
+## Stage 3a v3.3 — GATv2Conv + SWA 验证;最终 SOTA(2026-05-16)
+
+**实施**(用户指令"实施剩下的 GATv2Conv 和 SWA"):
+
+1. **`HeteroGraphTower(conv_type='gatv2')`**:per-relation `GATv2Conv(heads=2, concat=False, add_self_loops=False)`(`add_self_loops=False` 必需,hetero src/dst type 不同会破坏默认自环)
+2. **SWA wrapper**:`torch.optim.swa_utils.AveragedModel + SWALR`,swa_start_epoch=30,swa_lr=1e-4
+3. 2 个新 TDD 测试,53 → 55 tests pass
+4. `STAGE3A_V3_CONFIGS` 两新配置 `asym_v3_gatv2` + `asym_v3_swa`,各跑 1 次
+
+**单模结果**:
+
+| 配置 | PR-AUC | ROC-AUC | KS | R@.01 | FPR@.90 |
+|------|-------|---------|----|-------|---------|
+| (v2 best) asym_v2_dropout03 | 0.4546 | 0.8355 | 0.5234 | 0.4141 | 0.5561 |
+| **asym_v3_gatv2** ⭐ | **0.4674** | **0.8488** | 0.5444 | 0.4215 | 0.5289 |
+| **asym_v3_swa** | 0.4633 | 0.8468 | **0.5498** | **0.4227** | **0.5163** |
+
+GATv2Conv 赢 PR-AUC + ROC-AUC;SWA 赢 KS + R@.01 + FPR@.90 —— 互补不冗余。
+
+**关键 Pearson 发现**(8x8 相关性):**`asym_v3_gatv2` 与其他 7 个 DL 的相关性 0.71-0.79,全场最低** — architectural diversity(SAGE→GATv2)比 LR/loss/dropout/seed 变化产生更独特的信号。
+
+**8-DL + LGB 最终 ensemble SOTA**:
+
+| 策略 | PR-AUC | ROC-AUC | KS | R@.01 |
+|---|---|---|---|---|
+| LGB alone(传统基线) | 0.5556 | 0.9016 | 0.6475 | 0.4941 |
+| **v3_gatv2 + LGB 0.4/0.6** ⭐ | 0.5796 | 0.9032 | **0.6659** | **0.5308** ← R@.01 SOTA |
+| **DL_top4 + LGB 0.5/0.5** ⭐ | **0.5837** | 0.9059 | 0.6655 | 0.5295 ← **PR-AUC SOTA** |
+
+vs LGB alone:**PR-AUC +0.0281 (+5.1%),Recall@FPR=0.01 +0.0367 (+7.4%)**
+
+DL_top4 = [`v3_gatv2`, `v3_swa`, `v2_dropout03`, `v2_lr5e4`] — 全是架构或训练策略独特的,**没有 loss-variant 兄弟入选 top-4**,印证"架构 > 训练策略 > 损失"diversity 排序。
+
+### 项目最终成绩(自 Stage 1 起点的总进化)
+
+| 阶段 | Best PR-AUC | Best R@FPR=.01 | 类型 |
+|------|------------|------|------|
+| Stage 1 MVP | 0.34 | (n/a) | 双塔起点 |
+| Stage 2 deep | 0.4370 | 0.3632 | 特征工程升级 |
+| Stage 2 LGB | 0.5556 | 0.4941 | 传统基线 |
+| Stage 3a v3.1 DL | 0.4546 | 0.4141 | 训练策略修正 |
+| **Stage 3a v3.3 ensemble** | **0.5837** | **0.5308** | **8-DL + LGB stacking** |
+
+**总进化**:Stage 1 起点 PR-AUC 0.34 → v3.3 SOTA 0.5837 = **+71.7% 相对**。
+
+详见 `docs/DESIGN_JOURNAL.md` v3.3 节。
+
+**测试覆盖**:**55 pytest 通过**(Stage 1+2:37,Stage 3a 新增:5+4+4+2+1+1+1 = 18)。
