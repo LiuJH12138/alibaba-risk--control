@@ -1,5 +1,8 @@
 # 阿里/蚂蚁风控算法组实习 —— 复刻项目(Stage 1)
 
+> **🆕 新手必读**:[docs/SETUP.md](docs/SETUP.md) (30 分钟跑通) + [docs/LEARNING.md](docs/LEARNING.md) (112KB 完整学习文档,覆盖从零基础到面试 Q&A)
+
+
 在 IEEE-CIS 公开交易数据上复刻实习的技术方法:Transformer-GRU 序列塔 + GraphSAGE 图塔
 → 门控融合,Hybrid Focal Loss + Hard Negative Mining 训练,ONNX/TensorRT 部署 benchmark。
 
