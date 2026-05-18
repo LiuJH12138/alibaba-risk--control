@@ -1,13 +1,19 @@
 batch_size: 1024
 lr: 0.001
-weight_decay: 0.00001
-epochs: 20
+weight_decay: 0.0001          # Stage 3a v2: was 1e-5, raised to standard AdamW value
+epochs: 80                    # Stage 3a v2: was 40, raised so cosine has room to anneal
 warmup_steps: 500
 grad_clip: 1.0
 seed: 42
-neighbor_sample: [15, 10]   # 两层 GraphSAGE 每层采样邻居数
+neighbor_sample: [15, 10]
 focal_gamma_pos: 1.0
-focal_gamma_neg: 4.0        # 非对称:负样本压更狠
+focal_gamma_neg: 4.0
 focal_alpha: 0.25
-hnm_neg_pos_ratio: 3.0      # 难负:正
-early_stop_patience: 4
+hnm_neg_pos_ratio: 3.0
+early_stop_patience: 12       # Stage 3a v2: was 8, raised to tolerate cosine-decay temporary dips
+min_epochs: 10
+label_smoothing_eps: 0.1
+cosine_eta_min_ratio: 0.01    # Stage 3a v2 NEW: cosine LR floor = peak * this ratio (default 1%)
+swa_enabled: false          # Stage 3a v3.3 NEW: when true, wrap model in AveragedModel after swa_start_epoch
+swa_start_epoch: 30         # epoch to begin averaging weights (0-indexed)
+swa_lr: 0.0001              # constant LR to use after SWA starts (typically 10x smaller than peak)

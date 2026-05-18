@@ -10,6 +10,7 @@ from src.data.graph import build_edges
 from src.data.v_pruning import compute_pruned_v_cols
 
 from src.data.build import time_split, validate_split
+from src.data.entity_stats import compute_entity_stats, compute_all_entity_features
 
 def test_load_config_returns_dict():
     cfg = load_config("data")
@@ -157,3 +158,125 @@ def test_v_column_pruning_keeps_one_per_correlated_group():
     })
     kept = compute_pruned_v_cols(df, threshold=0.95)
     assert kept == ["V1", "V3", "V5"]   # 贪心顺序保留首个代表
+
+
+# ===== Stage 3a: entity stats (train-only computation, cold-start fallback) =====
+
+
+def test_entity_stats_train_only(tiny_raw_df):
+    """entity_stats must depend only on train rows; mutating val rows must not change output."""
+    df = tiny_raw_df.copy()
+    n = len(df)
+    train_idx = np.arange(0, int(n * 0.8))
+    val_idx = np.arange(int(n * 0.8), n)
+
+    stats_a = compute_entity_stats(df.iloc[train_idx], entity_col="card1",
+                                   amt_col="TransactionAmt",
+                                   dt_col="TransactionDT",
+                                   label_col="isFraud")
+    # Now scramble val labels AND val amounts: train-only stats must be unchanged
+    df.loc[val_idx, "isFraud"] = 1 - df.loc[val_idx, "isFraud"]
+    df.loc[val_idx, "TransactionAmt"] = df.loc[val_idx, "TransactionAmt"] * 1000.0
+    stats_b = compute_entity_stats(df.iloc[train_idx], entity_col="card1",
+                                   amt_col="TransactionAmt",
+                                   dt_col="TransactionDT",
+                                   label_col="isFraud")
+    pd.testing.assert_frame_equal(stats_a, stats_b)
+
+
+def test_cold_start_entity_fallback(tiny_raw_df):
+    """val/test entities not in train must be filled with train-population mean (no NaN)."""
+    df = tiny_raw_df.copy()
+    n = len(df)
+    train_idx = np.arange(0, int(n * 0.8))
+    val_idx = np.arange(int(n * 0.8), n)
+    # Inject a brand-new card1 value into val rows
+    df.loc[val_idx[0], "card1"] = 999999
+
+    feats = compute_all_entity_features(
+        df=df, train_idx=train_idx, val_idx=val_idx,
+        entity_cols=["card1", "addr1", "P_emaildomain", "DeviceInfo"],
+        amt_col="TransactionAmt", dt_col="TransactionDT", label_col="isFraud",
+    )
+    # feats is dict[entity_col] -> dict {ids: list, x: np.ndarray [n_unique+1, 5]}
+    card1_block = feats["card1"]
+    assert "_COLD_" in card1_block["ids"], "cold-start sentinel must exist"
+    assert not np.any(np.isnan(card1_block["x"])), "no NaN allowed in entity features"
+    # The 999999 entity should map to the cold-start row
+    cold_idx = card1_block["ids"].index("_COLD_")
+    cold_vec = card1_block["x"][cold_idx]
+    # cold-start vector must equal column means of train-entity vectors
+    train_only_rows = np.array([card1_block["x"][i] for i, eid in enumerate(card1_block["ids"])
+                                if eid != "_COLD_"])
+    np.testing.assert_allclose(cold_vec, train_only_rows.mean(axis=0, dtype="float64").astype("float32"), rtol=1e-5)
+
+
+# ===== Stage 3a: heterogeneous graph structure =====
+import torch
+from torch_geometric.data import HeteroData
+from src.data.build import build_hetero_graph
+
+
+def _tiny_hetero_inputs(tiny_raw_df):
+    """Helper that mimics build_all up to the point build_hetero_graph is called."""
+    df = tiny_raw_df.copy().sort_values("TransactionDT").reset_index(drop=True)
+    df["uid"] = df["card1"].astype(str) + "_" + df["addr1"].astype(str)
+    n = len(df)
+    train_idx = np.arange(0, int(n * 0.8))
+    val_idx = np.arange(int(n * 0.8), n)
+    # transaction node features: dummy [N, 4] (just to exercise wiring)
+    txn_cat = torch.zeros(n, 2, dtype=torch.int64)
+    txn_num = torch.zeros(n, 4, dtype=torch.float32)
+    return df, train_idx, val_idx, txn_cat, txn_num
+
+
+def test_hetero_graph_node_counts(tiny_raw_df):
+    df, train_idx, val_idx, txn_cat, txn_num = _tiny_hetero_inputs(tiny_raw_df)
+    hg = build_hetero_graph(
+        df=df, train_idx=train_idx, val_idx=val_idx,
+        txn_cat_x=txn_cat, txn_num_x=txn_num,
+        entity_cols=["card1", "addr1", "P_emaildomain", "DeviceInfo"],
+    )
+    assert isinstance(hg, HeteroData)
+    assert hg["transaction"].num_nodes == len(df)
+    for col in ["card1", "addr1", "P_emaildomain", "DeviceInfo"]:
+        # train-unique count + 1 cold-start row
+        train_unique = df.iloc[train_idx][col].fillna("_NA_").astype(str).nunique()
+        assert hg[col].num_nodes == train_unique + 1, \
+            f"{col}: expected {train_unique + 1}, got {hg[col].num_nodes}"
+
+
+def test_hetero_graph_edge_directions(tiny_raw_df):
+    df, train_idx, val_idx, txn_cat, txn_num = _tiny_hetero_inputs(tiny_raw_df)
+    hg = build_hetero_graph(
+        df=df, train_idx=train_idx, val_idx=val_idx,
+        txn_cat_x=txn_cat, txn_num_x=txn_num,
+        entity_cols=["card1", "addr1", "P_emaildomain", "DeviceInfo"],
+    )
+    pairs = [
+        (("transaction", "paid_with", "card1"),         ("card1", "rev_paid_with", "transaction")),
+        (("transaction", "shipped_to", "addr1"),        ("addr1", "rev_shipped_to", "transaction")),
+        (("transaction", "sent_to_email", "P_emaildomain"),
+                                                        ("P_emaildomain", "rev_sent_to_email", "transaction")),
+        (("transaction", "on_device", "DeviceInfo"),    ("DeviceInfo", "rev_on_device", "transaction")),
+    ]
+    for fwd, rev in pairs:
+        assert fwd in hg.edge_types, f"missing forward edge {fwd}"
+        assert rev in hg.edge_types, f"missing reverse edge {rev}"
+        assert hg[fwd].edge_index.shape[1] == hg[rev].edge_index.shape[1], \
+            f"forward/reverse count mismatch on {fwd}"
+
+
+def test_next_by_uid_time_respecting(tiny_raw_df):
+    df, train_idx, val_idx, txn_cat, txn_num = _tiny_hetero_inputs(tiny_raw_df)
+    hg = build_hetero_graph(
+        df=df, train_idx=train_idx, val_idx=val_idx,
+        txn_cat_x=txn_cat, txn_num_x=txn_num,
+        entity_cols=["card1", "addr1", "P_emaildomain", "DeviceInfo"],
+    )
+    et = ("transaction", "next_by_uid", "transaction")
+    assert et in hg.edge_types
+    src, dst = hg[et].edge_index
+    if src.numel() > 0:
+        t = torch.from_numpy(df["TransactionDT"].to_numpy())
+        assert (t[dst] >= t[src]).all(), "next_by_uid violates time-respecting order"
